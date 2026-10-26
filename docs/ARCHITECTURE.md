@@ -1,13 +1,13 @@
-# Arquitectura — Open Colposcope (nombre provisional)
+# Arquitectura — Open Colposcope
 
 > **Aviso:** este proyecto es un **prototipo educativo**. **No es un producto médico
 > validado** ni está destinado al diagnóstico, tratamiento o toma de decisiones clínicas.
 
 | Campo | Valor |
 |---|---|
-| Estado | Borrador para revisión (F0) |
-| Versión del documento | 0.1 |
-| Documentos relacionados | [ROADMAP](ROADMAP.md) · [RISKS](RISKS.md) · [HARDWARE](HARDWARE.md) · [STACK](STACK.md) |
+| Estado | F0 cerrada · F1 en curso |
+| Versión del documento | 0.2 |
+| Documentos relacionados | [ROADMAP](ROADMAP.md) · [RISKS](RISKS.md) · [HARDWARE](HARDWARE.md) · [STACK](STACK.md) · [CAPTURE](CAPTURE.md) · [PRIVACY](PRIVACY.md) · [LEGAL](LEGAL.md) |
 
 ---
 
@@ -35,7 +35,7 @@ de captura respetuosa con la privacidad encima de ese estándar.
 | O1 | Capturar **imágenes fijas** y **video** desde colposcopios USB compatibles con UVC. |
 | O2 | Funcionar **100 % offline**: sin red, sin telemetría, sin actualizaciones automáticas, sin cuentas. |
 | O3 | **Privacidad por diseño**: el software nunca solicita ni almacena datos identificatorios del paciente. |
-| O4 | **Multiplataforma**: Windows 10/11, Linux (x86_64) y macOS (best effort). |
+| O4 | **Multiplataforma**: Windows 10/11 x64 como plataforma principal (la del sitio piloto); Linux x86_64 en CI; macOS *best effort*. |
 | O5 | Rendimiento aceptable en **hardware modesto** (ver §9, equipo de referencia). |
 | O6 | **Abstracción de hardware** que permita añadir dispositivos mediante perfiles y plugins, sin tocar el núcleo. |
 | O7 | Usable **sin hardware** (modo demostración/reproducción) para docencia y para contribuir sin tener un colposcopio. |
@@ -56,6 +56,8 @@ Lo que el proyecto **no** hará (y rechazará en contribuciones):
 - **No** reemplaza el software certificado del fabricante en un uso clínico.
 - **No** busca certificación regulatoria (CE/MDR, FDA, ANVISA, COFEPRIS, ANMAT, INVIMA, etc.).
 - **No** soporta protocolos de video propietarios no documentados (ver §6.6).
+- **No** captura pacientes en F1–F3 (solo maniquíes y material educativo existente). La captura
+  clínica educativa a partir de F4 queda sujeta a las condiciones de [PRIVACY.md](PRIVACY.md).
 - **No** incluye autenticación multiusuario propia: se delega en las cuentas del sistema operativo.
 
 ## 4. Actores
@@ -111,8 +113,8 @@ flowchart LR
 | UC-02 | Vista previa en vivo | Abre el stream con el formato negociado; muestra FPS, resolución y estado. | La vista previa puede reducirse; la captura usa el frame a resolución completa. |
 | UC-03 | Capturar imagen fija | Teclado, pedal (HID) o botón del equipo dispara la captura; se guarda PNG sin pérdida + metadatos. | Escritura atómica; confirmación visual/sonora sólo tras persistir. |
 | UC-04 | Grabar video | Inicio/fin de grabación; segmentos para tolerar fallos. | **Sin pista de audio** por defecto; aviso de espacio en disco. |
-| UC-05 | Abrir/cerrar estudio anónimo | Se genera un `study_id` aleatorio local; no se pide nombre ni documento. | El vínculo `study_id` ↔ paciente, si la institución lo necesita, se gestiona **fuera** de la app. |
-| UC-06 | Etiquetar | Etapa (basal, solución salina, ácido acético, lugol, filtro verde), etiquetas docentes. | Texto libre desactivado por defecto; si se habilita, se marca como "requiere revisión" al exportar. |
+| UC-05 | Abrir/cerrar estudio anónimo | Se genera un `study_id` aleatorio local; no se pide nombre ni documento; se registra la hora exacta. | El vínculo `study_id` ↔ paciente, si la institución lo necesita, se gestiona **fuera** de la app. |
+| UC-06 | Etiquetar | Etapa según vocabulario IFCPC (basal, solución salina, ácido acético, lugol, filtro verde), configurable; etiquetas docentes. | Texto libre desactivado por defecto; si se habilita, se marca como "requiere revisión" al exportar. |
 | UC-07 | Revisar galería | Ver capturas del estudio, comparar etapas, descartar. | Solo lectura local. |
 | UC-08 | Exportar paquete educativo | ZIP con imágenes, metadatos saneados, manifiesto y sumas SHA-256. | Segunda pasada del anonimizador; texto libre excluido salvo revisión explícita. |
 | UC-09 | Diagnóstico de hardware | Genera un reporte (descriptores USB, formatos, controles) sin números de serie. | Sirve para contribuir a HARDWARE.md. |
@@ -121,6 +123,21 @@ flowchart LR
 | UC-12 | Eliminar estudio | Elimina archivos e índice del estudio. | Advertencia: en SSD el borrado seguro no está garantizado; recomendar cifrado de disco. |
 
 ## 6. Vista de componentes
+
+### 6.0 Vía de captura principal (decisión confirmada en F0)
+
+**La vía principal es UVC + OpenCV**: el colposcopio se lee como cámara UVC con el controlador
+genérico del sistema operativo, a través de `cv2.VideoCapture` (DirectShow por defecto en
+Windows, Media Foundation como alternativa; V4L2 en Linux). Se confirmó empíricamente con el
+**Goldcare GC 3000E** en Windows 10: la app "Cámara" muestra la imagen sin el software del
+fabricante y sin el dongle conectado (ver [HARDWARE.md](HARDWARE.md)).
+
+La capturadora externa (salida de video del equipo → capturadora UVC) y el SDK del fabricante
+quedan **solo como vías de contingencia documentadas** (§6.6), para otros modelos o sitios
+donde la vía UVC no funcione. No forman parte del camino principal ni del alcance de F1–F2.
+
+La implementación de F1 está en `src/colpo/capture.py` (clase `UVCCamera`) y se documenta en
+[CAPTURE.md](CAPTURE.md).
 
 ### 6.1 Principios arquitectónicos
 
@@ -211,8 +228,8 @@ flowchart TB
 | Servicio de grabación | Encola frames, codifica en segmentos, finaliza contenedor. | No graba audio por defecto. |
 | Servicio de disparadores | Unifica eventos de teclado, pedal HID y botón físico UVC en acciones. | No accede a dispositivos de entrada fuera de foco salvo configuración explícita. |
 | Servicio de metadatos | Construye y valida el *sidecar* JSON contra un esquema versionado. | No acepta campos fuera del esquema. |
-| Anonimizador | Aplica lista blanca de campos, reduce precisión temporal, elimina EXIF/XMP, aplica máscaras de región. | No intenta "detectar" PII en imágenes con IA. |
-| Exportador educativo | Genera ZIP + manifiesto + SHA-256; marca de agua opcional "Uso educativo". | No sube nada a ningún sitio. |
+| Anonimizador | Aplica lista blanca de campos, elimina EXIF/XMP, aplica máscaras de región. Conserva la hora exacta (no es un dato de identidad del paciente). | No intenta "detectar" PII en imágenes con IA. |
+| Exportador educativo | Genera ZIP + manifiesto + SHA-256. Sin marca de agua por defecto (opción desactivada, F3+). | No sube nada a ningún sitio. |
 | Diagnóstico de hardware | Reporta descriptores y capacidades sin números de serie. | No envía el reporte; el usuario decide compartirlo. |
 | Registro de backends | Descubre backends, asocia perfiles por VID:PID, elige el mejor backend disponible. | No contiene lógica específica de un modelo. |
 
@@ -286,8 +303,8 @@ classDiagram
 
 | Backend | Uso | Estado previsto | Notas |
 |---|---|---|---|
-| `opencv` | Predeterminado. Usa el controlador UVC del SO (V4L2, MSMF/DirectShow, AVFoundation). | F1 | OpenCV no enumera formatos ni nombres de forma fiable: se complementa con enumeración nativa por SO. |
-| `replay` | Reproduce un video o carpeta de imágenes como si fuera una cámara. | F1 | Base de las pruebas automatizadas y del modo demostración. |
+| `opencv` | **Vía principal.** Usa el controlador UVC del SO (DirectShow por defecto y MSMF en Windows; V4L2 en Linux; AVFoundation en macOS). | F1 ✅ | OpenCV no expone nombres ni VID:PID: se complementa con `cv2-enumerate-cameras` (API nativa de cada SO, mismos índices que OpenCV). |
+| `replay` | Reproduce un video como si fuera una cámara. | F1 ✅ (como `UVCCamera(source=...)`) | Base de las pruebas automatizadas y del modo demostración. |
 | `qt` | Qt Multimedia (`QMediaDevices`/`QCamera`). | F3 (evaluación) | Mejor enumeración de formatos multiplataforma; comparar latencia y control. |
 | `libuvc` | Acceso UVC en espacio de usuario vía libusb. | F3 (opcional) | Útil para controles UVC avanzados/unidades de extensión **documentadas**. En Linux requiere desvincular `uvcvideo`; en Windows requiere reemplazar el controlador (WinUSB), lo que rompe el uso normal de la cámara: **no es la ruta por defecto**. |
 | Plugins externos | Backends de terceros (p. ej., SDK publicado por un fabricante con licencia compatible). | F3 | Se registran por *entry points* de Python (`open_colposcope.backends`). Deben cumplir la política de RISKS.md §5. |
@@ -295,8 +312,8 @@ classDiagram
 **Enumeración y detección de UVC**
 
 - Linux: `/sys/class/video4linux/*/device` → VID/PID e interfaz (`bInterfaceClass = 0x0E`, Video).
-- Windows: identificadores de hardware `USB\VID_xxxx&PID_xxxx` vía la API de dispositivos
-  (o librería auxiliar a evaluar en F0); el controlador `usbvideo.sys` indica UVC.
+- Windows: enumeración DirectShow/Media Foundation vía `cv2-enumerate-cameras`, que extrae
+  `VID_xxxx&PID_xxxx` de la ruta del dispositivo; el controlador `usbvideo.sys` indica UVC.
 - macOS: `AVCaptureDevice` + registro IOKit para VID/PID.
 - `pyusb` se usa **solo en lectura** (descriptores) para el diagnóstico (UC-09), nunca para
   reclamar la interfaz de video mientras el controlador del SO la usa.
@@ -342,8 +359,9 @@ permitir YUY2 a menor FPS cuando se busca máxima fidelidad en imagen fija (F3).
 
 ### 6.6 Dispositivos no UVC
 
-Si F0 determina que un colposcopio **no** expone UVC (p. ej., protocolo propietario o video
-cifrado), las vías legítimas, en orden de preferencia, son:
+Vías de **contingencia** (no son el camino principal, ver §6.0). Si en otro sitio o con otro
+modelo el colposcopio **no** expone UVC (p. ej., protocolo propietario, firmware distinto o
+video cifrado), las vías legítimas, en orden de preferencia, son:
 
 1. **Salida de video estándar del equipo** (HDMI/SDI/compuesto) + **capturadora USB UVC** genérica.
 2. **Puerto óptico** (divisor de haz / montura C) + **cámara UVC** genérica.
@@ -451,8 +469,10 @@ cierra y el sidecar registra la interrupción.
    **fuera de la aplicación** y bajo su propia política.
 3. **Lista blanca**: el esquema de metadatos rechaza cualquier campo no definido.
 4. **Sin metadatos incrustados**: PNG/MKV se escriben sin EXIF/XMP/GPS; las importaciones se limpian.
-5. **Tiempo con precisión configurable**: por defecto se guarda solo la **fecha** y un
-   desplazamiento relativo dentro del estudio (`t_offset_s`), no la hora absoluta.
+5. **Hora exacta, sin datos de paciente**: cada captura registra fecha y hora local exactas
+   al segundo, con desfase UTC (ISO 8601). La hora es un dato de la captura, no de la identidad
+   del paciente; aun así, combinada con agendas del sitio podría permitir vincular una captura
+   con una persona, por lo que se trata como dato sensible (ver [PRIVACY.md](PRIVACY.md)).
 6. **Sin audio** por defecto (las conversaciones pueden contener nombres).
 7. **Máscaras de privacidad** por perfil para tapar texto superpuesto (OSD) por la cámara.
 8. **Registros (logs) sin PII**: nunca incluyen rutas con nombres de estudio enriquecidos ni texto libre.
@@ -493,7 +513,7 @@ se considera incompleto y se ofrece recuperar o descartar al iniciar.
   "study_id": "S-7F3K2Q",
   "kind": "image",
   "files": [{ "name": "0001.png", "sha256": "…", "bytes": 3145728 }],
-  "time": { "date": "2026-10-26", "t_offset_s": 312.4, "precision": "date" },
+  "captured_at": "2026-10-26T15:04:05-05:00",
   "acquisition": {
     "width": 1920, "height": 1080, "pixel_format": "MJPG", "fps": 30,
     "controls": { "white_balance_auto": false, "exposure_auto": true },
@@ -506,6 +526,7 @@ se considera incompleto y se ofrece recuperar o descartar al iniciar.
   },
   "educational": {
     "stage": "acetic_acid",
+    "stage_vocabulary": "ifcpc",
     "tags": ["zona-de-transformacion"],
     "free_text": null
   },
@@ -516,6 +537,9 @@ se considera incompleto y se ofrece recuperar o descartar al iniciar.
 }
 ```
 
+El vocabulario de etapas (`stage`) sigue la terminología IFCPC (`baseline`, `saline`,
+`acetic_acid`, `lugol`, `green_filter`) y es configurable en el JSON de metadatos.
+
 Campos **prohibidos por diseño** (no existen en el esquema): nombre, iniciales, documento,
 fecha de nacimiento, edad exacta, historia clínica, dirección, teléfono, número de serie
 del dispositivo, nombre del equipo/usuario del SO, coordenadas.
@@ -524,10 +548,11 @@ del dispositivo, nombre del equipo/usuario del SO, coordenadas.
 
 1. El usuario selecciona capturas de uno o varios estudios.
 2. El anonimizador aplica una **segunda pasada**: reasigna `study_id` (opcional), elimina
-   `free_text` salvo revisión explícita, reduce la precisión temporal, verifica que las
-   máscaras se aplicaron.
+   `free_text` salvo revisión explícita y verifica que las máscaras se aplicaron. La hora
+   exacta se conserva.
 3. Se genera `manifest.json` + `SHA256SUMS` + `LEEME.txt` con la declaración de uso previsto.
-4. Marca de agua visible "Uso educativo — no diagnóstico" (activada por defecto en exportación).
+4. **Sin marca de agua por defecto.** Si se implementa (F3+), será una opción desactivada.
+   La declaración de uso previsto va en `LEEME.txt` y en los metadatos (`intended_use`).
 5. Exportación DICOM (VL Photographic / Secondary Capture con perfil de desidentificación
    PS3.15) se considera para fases posteriores.
 
@@ -550,7 +575,7 @@ del dispositivo, nombre del equipo/usuario del SO, coordenadas.
 
 | Atributo | Objetivo inicial (a validar en F0/F1) |
 |---|---|
-| Equipo de referencia | PC x86_64, 4 GB RAM, CPU de 2 núcleos (~2015), sin GPU dedicada, USB 2.0, Windows 10 o Linux. |
+| Equipo de referencia | PC x86_64, 4 GB RAM, CPU de 2 núcleos (~2015), sin GPU dedicada, USB 2.0, **Windows 10/11 de 64 bits** (no hay Windows 7/8 ni 32 bits en los sitios). |
 | Latencia de vista previa | < 150 ms extremo a extremo a 1080p MJPEG. |
 | Tiempo de captura confirmada | < 1 s desde el disparo hasta la confirmación persistida. |
 | Pérdida de frames en grabación | < 1 % en 30 min a 1080p30 MJPEG en el equipo de referencia. |

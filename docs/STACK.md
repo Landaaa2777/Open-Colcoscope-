@@ -1,8 +1,8 @@
-# Propuesta de stack tecnológico (ADR-0001, borrador)
+# Stack tecnológico (ADR-0001)
 
 | Campo | Valor |
 |---|---|
-| Estado | **Propuesto** — se confirma o ajusta al cierre de F0 con los resultados del *spike* |
+| Estado | **Aceptado** al cierre de F0 (2026-10) |
 | Contexto | [ARCHITECTURE.md](ARCHITECTURE.md), [RISKS.md](RISKS.md) |
 
 ## 1. Criterios de decisión (en orden de peso)
@@ -15,23 +15,27 @@
 5. **Licencias compatibles** con distribución abierta y con uso institucional.
 6. **Empaquetado offline** razonable (instalador o versión portable).
 
-## 2. Decisión propuesta
+## 2. Decisión
+
+**Confirmado en F0:** Python 3.11+, OpenCV, PySide6, `pyusb` solo lectura (solo para
+diagnóstico; **no** es necesario para capturar por UVC) y PyInstaller para Windows 10/11 x64.
+La vía de captura principal es UVC + OpenCV (ARCHITECTURE.md §6.0).
 
 | Capa | Elección | Motivo principal |
 |---|---|---|
-| Lenguaje | **Python ≥ 3.11** (CI en las versiones soportadas por las ruedas de PySide6/OpenCV) | Comunidad amplia en ciencia/medicina; prototipado rápido; buenas librerías de imagen. |
+| Lenguaje | **Python ≥ 3.11**, 64 bits (CI en 3.11 y 3.13) | Comunidad amplia en ciencia/medicina; prototipado rápido; buenas librerías de imagen. |
 | Captura | **OpenCV** (`opencv-python-headless`) sobre V4L2 / MSMF / DirectShow / AVFoundation | Madura, multiplataforma, ya trae los backends del SO; Apache-2.0. |
-| Enumeración de dispositivos | Código nativo mínimo por SO (sysfs en Linux; API de dispositivos en Windows; AVFoundation/IOKit en macOS) — evaluar librerías auxiliares en F0 | OpenCV solo expone índices; necesitamos VID/PID y nombre para aplicar perfiles. |
-| Introspección USB | **`pyusb` + libusb**, solo lectura, para `diagnose` | Lectura de descriptores sin reclamar la interfaz de video. |
+| Enumeración de dispositivos | **`cv2-enumerate-cameras`** (MIT): DirectShow/MSMF en Windows, V4L2 en Linux, AVFoundation en macOS, con los mismos índices que OpenCV; sondeo de índices como respaldo | OpenCV solo expone índices; necesitamos nombre y VID:PID para identificar el colposcopio y aplicar perfiles. Aislado en `colpo/devices.py` para poder sustituirlo. |
+| Introspección USB | **`pyusb` + libusb**, solo lectura, para `diagnose` (F1.b/F3). **No** es dependencia de la captura | Lectura de descriptores sin reclamar la interfaz de video. |
 | UVC avanzado | **libuvc** (opcional, F3) | Controles UVC y *still trigger* cuando el SO no los expone; no predeterminado (requiere cambiar controlador). |
-| GUI | **PySide6 (Qt 6)** | Video fluido, HiDPI, accesibilidad, i18n (Qt Linguist), LGPL, binding oficial de Qt. |
-| Video (grabación) | OpenCV `VideoWriter` (MJPEG/AVI) en F1; evaluar **PyAV** (FFmpeg) para MKV y *passthrough* MJPEG | Bajo uso de CPU; evitar recodificar en equipos modestos. |
+| GUI | **PySide6 (Qt 6)**, paquete `PySide6-Essentials` | Video fluido, HiDPI, accesibilidad, i18n (Qt Linguist), LGPL, binding oficial de Qt. En F1 solo se usa para la ventana de vista previa. |
+| Video (grabación) | OpenCV `VideoWriter`: `.mp4` → MPEG-4 Part 2 (`mp4v`); `.avi`/`.mkv` → MJPEG. Evaluar **PyAV** (FFmpeg) para *passthrough* MJPEG sin recodificar | `.mp4` es el formato pedido para F1 y se reproduce en cualquier equipo; MJPEG da más calidad con menos CPU. H.264 no viene en las ruedas de OpenCV. |
 | Metadatos | JSON *sidecar* + **JSON Schema** (validación con `jsonschema` o `pydantic`) | Legible por humanos, versionable, fácil de auditar. |
 | Índice | **SQLite** (stdlib `sqlite3`) | Sin servidor; reconstruible desde los sidecars. |
 | Configuración | **TOML** (`tomllib` stdlib para lectura) | Legible; estándar en Python. |
 | Pruebas | `pytest`, `pytest-qt`, backend `replay`, `hypothesis` (opcional) | Probar sin hardware. |
 | Calidad | `ruff`, `mypy`, `pre-commit` | Estándar actual, rápido. |
-| Empaquetado | **PyInstaller** (Win/macOS), **AppImage** (Linux), Flatpak como segunda opción | Ver tabla §3.7. |
+| Empaquetado | **PyInstaller para Windows 10/11 x64** (prioritario); AppImage/macOS solo si hay demanda | Ver tabla §3.7. |
 | i18n | Qt Linguist (`.ts`) para la GUI; `gettext` para CLI si hace falta | Flujo de traducción comunitario conocido. |
 | Documentación | Markdown en `docs/` (+ MkDocs opcional, compilado offline) | Baja barrera de entrada. |
 
@@ -111,7 +115,9 @@
 | Dependencia | Licencia | Observaciones |
 |---|---|---|
 | Python | PSF | — |
-| OpenCV (`opencv-python-headless`) | Apache-2.0 (las ruedas incluyen FFmpeg LGPL) | Incluir avisos. |
+| OpenCV (`opencv-python-headless`) | Apache-2.0 (las ruedas incluyen FFmpeg LGPL) | Incluir avisos. Se usa la variante *headless* para no chocar con los plugins Qt de PySide6. |
+| cv2-enumerate-cameras | MIT | Enumeración de cámaras (nombre, VID:PID). |
+| NumPy | BSD-3 | — |
 | PySide6 / Qt 6 | LGPL-3.0 | Enlace dinámico; permitir sustitución de librerías; incluir avisos. |
 | pyusb / libusb | BSD-3 / LGPL-2.1 | — |
 | libuvc | BSD-3 | Opcional. |
@@ -122,7 +128,7 @@
 
 - **Positivas:** arranque rápido del desarrollo, comunidad amplia, captura estándar sin código
   propietario, núcleo testeable sin hardware.
-- **Negativas:** paquetes grandes; Qt 6 excluye Windows 7/8 y 32 bits; OpenCV requiere
-  código complementario de enumeración por SO.
-- **A revisar en F0:** parque real de SO, rendimiento en el equipo de referencia, calidad de la
-  enumeración por SO, comportamiento de MSMF vs DirectShow con los modelos disponibles.
+- **Negativas:** paquetes grandes; Qt 6 excluye Windows 7/8 y 32 bits (no afecta: los sitios
+  usan Windows 10/11 x64); OpenCV requiere una librería complementaria de enumeración.
+- **A revisar con el GC 3000E (F1, prueba manual):** rendimiento en el equipo del sitio,
+  comportamiento de DirectShow vs Media Foundation, formatos y FPS reales.

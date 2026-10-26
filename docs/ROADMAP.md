@@ -1,4 +1,4 @@
-# Roadmap — Open Colposcope (nombre provisional)
+# Roadmap — Open Colposcope
 
 > Prototipo educativo. **No es un producto médico validado.**
 
@@ -30,7 +30,12 @@ flowchart LR
 
 ---
 
-## F0 — Descubrimiento
+## F0 — Descubrimiento ✅ (cerrada)
+
+**Resultado:** Goldcare GC 3000E confirmado como UVC en Windows 10 sin software del fabricante
+ni dongle; equipos de destino Windows 10/11 x64; licencias Apache-2.0 (código) y CC-BY-4.0
+(documentación); stack confirmado (STACK.md); sin pacientes en F1–F3. Pendiente menor: VID:PID
+del GC 3000E (se obtiene con `colpo list` en el equipo del sitio; ver HARDWARE.md).
 
 **Objetivo:** confirmar con evidencia que los colposcopios objetivo pueden capturarse por
 vías estándar (UVC) sin el software propietario, y cerrar las decisiones de base.
@@ -67,20 +72,30 @@ vías estándar (UVC) sin el software propietario, y cerrar las decisiones de ba
 **Objetivo:** biblioteca de núcleo + CLI que capturan imagen fija y video de forma fiable,
 privada y verificable.
 
+**Alcance acordado al cerrar F0 (F1.a, entregado):** clase `UVCCamera` en
+`src/colpo/capture.py` (enumeración, apertura por índice, resolución/FPS reales, `read_frame`,
+`snapshot`, `start_recording`/`stop_recording`, errores explícitos), CLI `colpo`
+(`list`, `preview`, `record`, `snapshot`), video sintético en `examples/synthetic_video.py`,
+pruebas sin hardware, `docs/CAPTURE.md`. Puerta de salida hacia F2: `ruff` y `pytest` en verde.
+
+**F1.b (pendiente, antes de exponer la GUI a usuarios):** estudios con `study_id`, sidecar
+JSON con hora exacta y esquema validado, índice SQLite, video segmentado. Estado por
+entregable en la tabla siguiente.
+
 ### Entregables
 
-| # | Entregable |
-|---|---|
-| F1.1 | Estructura del repositorio (`src/` layout, `pyproject.toml`), linters (`ruff`), tipado (`mypy`), `pre-commit`. |
-| F1.2 | Interfaces HAL (`CaptureBackend`, `CaptureSession`, `DeviceInfo`, `Frame`) según ARCHITECTURE.md §6.4. |
-| F1.3 | Backend `opencv` con enumeración complementaria por SO (VID/PID, nombre). |
-| F1.4 | Backend `replay` (video/carpeta de imágenes) para pruebas y demostración. |
-| F1.5 | Servicios de estudio, captura, grabación segmentada, metadatos (JSON Schema v1.0) y anonimizador. |
-| F1.6 | Almacenamiento con escritura atómica, SHA-256 e índice SQLite reconstruible. |
-| F1.7 | CLI: `devices`, `preview` (ventana mínima de depuración), `capture`, `record`, `diagnose`, `reindex`. |
-| F1.8 | CI en Linux, Windows y macOS con pruebas sobre el backend `replay`. |
-| F1.9 | Prueba "sin red" en CI (ARCHITECTURE.md §8.6). |
-| F1.10 | Protocolo de prueba manual con hardware real (lista de verificación reproducible). |
+| # | Entregable | Estado |
+|---|---|---|
+| F1.1 | Estructura del repositorio (`src/` layout, `pyproject.toml`), `ruff` (lint + formato). `mypy` y `pre-commit`. | ✅ ruff · ⏳ mypy/pre-commit |
+| F1.2 | `UVCCamera`, `DeviceInfo`, `Frame`, `StreamInfo`; jerarquía de errores. Las interfaces HAL formales (ARCHITECTURE.md §6.4) se extraen en F3. | ✅ |
+| F1.3 | Backend OpenCV con enumeración por SO (nombre, VID:PID) vía `cv2-enumerate-cameras` y sondeo de índices como respaldo. | ✅ |
+| F1.4 | Fuente de archivo (`UVCCamera(source=...)`) para pruebas y demostración. | ✅ |
+| F1.5 | Estudios, sidecar JSON con hora exacta (JSON Schema v1.0) y anonimizador. | ⏳ F1.b |
+| F1.6 | Escritura atómica de fotos y videos ✅; SHA-256, índice SQLite y video segmentado. | ✅ parcial · ⏳ F1.b |
+| F1.7 | CLI: `list`, `preview`, `record`, `snapshot` ✅; `diagnose`, `reindex`. | ✅ · ⏳ F1.b/F3 |
+| F1.8 | CI en Windows y Linux con video sintético (`.github/workflows/ci.yml`). | ✅ (macOS: best effort) |
+| F1.9 | Prueba "sin red" (estática y dinámica). | ✅ |
+| F1.10 | Protocolo de prueba manual con hardware real (CAPTURE.md §6). | ✅ redactado · ⏳ ejecutar con el GC 3000E |
 
 ### Criterios de aceptación
 
@@ -94,7 +109,7 @@ privada y verificable.
 - [ ] Todos los sidecars validan contra el esquema; el esquema no admite campos de PII
       (prueba que intenta inyectarlos y falla).
 - [ ] Ningún archivo generado contiene EXIF/XMP ni pista de audio.
-- [ ] Probado con ≥ 1 colposcopio real en Linux y Windows; resultados en HARDWARE.md.
+- [ ] Probado con ≥ 1 colposcopio real en Windows 10/11 (GC 3000E); resultados en HARDWARE.md.
 - [ ] Cobertura de pruebas ≥ 80 % en el núcleo (excluyendo adaptadores de hardware).
 
 ---
@@ -108,12 +123,12 @@ privada y verificable.
 | # | Entregable |
 |---|---|
 | F2.1 | GUI PySide6: selector de dispositivo, vista previa, captura, grabación, indicadores de estado (FPS, resolución, espacio libre, frames perdidos). |
-| F2.2 | Flujo de estudio anónimo (abrir/cerrar), etiquetado por etapa con vocabulario controlado. |
+| F2.2 | Flujo de estudio anónimo (abrir/cerrar), etiquetado por etapa con vocabulario IFCPC configurable. |
 | F2.3 | Galería del estudio con comparación lado a lado de etapas. |
-| F2.4 | Exportación educativa (ZIP + manifiesto + marca de agua configurable). |
-| F2.5 | Atajos de teclado y soporte de pedal HID; disparador configurable. |
+| F2.4 | Exportación educativa (ZIP + manifiesto, sin marca de agua; la marca de agua opcional y desactivada llega en F3+). |
+| F2.5 | Disparo por teclado y ratón (no hay pedal conocido); un pedal HID que emule teclado funcionará sin cambios. |
 | F2.6 | Avisos permanentes de uso previsto ("educativo — no diagnóstico") en arranque, "Acerca de" y exportaciones. |
-| F2.7 | Internacionalización: español e inglés completos; infraestructura para más idiomas. |
+| F2.7 | Internacionalización: español e inglés completos desde F2; infraestructura para más idiomas. |
 | F2.8 | Modo demostración (backend `replay`) accesible desde la UI. |
 | F2.9 | Pruebas de UI automatizadas (`pytest-qt`) para los flujos principales. |
 | F2.10 | Guía de uso para docentes (con capturas de pantalla sin datos reales). |
@@ -168,18 +183,21 @@ privada y verificable.
 
 | # | Entregable |
 |---|---|
-| F4.1 | Windows: instalador (PyInstaller + Inno Setup/NSIS o MSI) y **versión portable** (carpeta/ZIP). |
-| F4.2 | Linux: AppImage; Flatpak como segunda opción (permiso de dispositivos de video). |
-| F4.3 | macOS: `.app`/`.dmg` con `NSCameraUsageDescription`; firma/notarización si hay financiación. |
+| F4.1 | **Prioritario.** Windows 10/11 x64: PyInstaller + instalador (Inno Setup/NSIS o MSI) y **versión portable** (carpeta/ZIP). |
+| F4.2 | Secundario (si hay demanda): Linux AppImage; Flatpak como segunda opción. |
+| F4.3 | Secundario (si hay demanda y fondos): macOS `.app`/`.dmg` con `NSCameraUsageDescription`, firma/notarización. |
 | F4.4 | Modo portable: datos y configuración junto al ejecutable (útil en memorias USB). |
 | F4.5 | SBOM (CycloneDX), avisos de licencias de terceros (incluido cumplimiento LGPL de Qt), `SHA256SUMS` y firma de las versiones. |
 | F4.6 | Procedimiento documentado de compilación reproducible y de publicación. |
 | F4.7 | Guía de instalación para TI (permisos de cámara, cifrado de disco, antivirus, grupo `video` en Linux). |
+| F4.8 | Habilitación de captura clínica educativa en entorno controlado: lista de verificación de PRIVACY.md (comité de ética, consentimiento informado, Ley 29733, anonimización obligatoria). |
+| F4.9 | Verificación previa por sitio (RISKS.md T16) documentada y ejecutada en cada sitio nuevo. |
 
 ### Criterios de aceptación
 
 - [ ] Instalación y primera captura en una máquina limpia **sin conexión a Internet** en
-      Windows 10/11 y en una distribución Linux de referencia.
+      Windows 10/11 x64 (instalador PyInstaller).
+- [ ] Ninguna captura de pacientes antes de completar la lista de verificación de PRIVACY.md.
 - [ ] La aplicación arranca en < 5 s en el equipo de referencia.
 - [ ] Tamaño del instalador documentado y justificado (objetivo orientativo < 200 MB).
 - [ ] El binario no realiza conexiones de red (verificado con monitor de red durante una sesión completa).
@@ -209,6 +227,7 @@ privada y verificable.
 ### Criterios de aceptación
 
 - [ ] Una persona externa al equipo inicial completa un PR aceptado siguiendo solo la documentación.
+- [ ] ≥ 1 sitio o institución adicional verificado según RISKS.md T16.
 - [ ] ≥ 1 perfil de hardware aportado por la comunidad e integrado.
 - [ ] ≥ 2 idiomas además del español mantenidos por la comunidad (p. ej., inglés y portugués).
 - [ ] Proceso de reporte de vulnerabilidades probado (ejercicio simulado).

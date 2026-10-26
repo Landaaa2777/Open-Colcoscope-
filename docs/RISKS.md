@@ -1,22 +1,23 @@
-# Registro de riesgos — Open Colposcope (nombre provisional)
+# Registro de riesgos — Open Colposcope
 
 > Prototipo educativo. **No es un producto médico validado.**
 > Este documento **no constituye asesoría legal ni regulatoria**. Las instituciones que
 > adopten el software deben consultar a asesores en su jurisdicción.
 
 **Escala:** Probabilidad (P) e Impacto (I): Baja / Media / Alta. Se revisa al cerrar cada fase.
+Última revisión: cierre de F0.
 
 ## 1. Riesgos técnicos
 
 | ID | Riesgo | P | I | Mitigación | Fase |
 |---|---|---|---|---|---|
-| T1 | El colposcopio **no es UVC** (protocolo propietario, video cifrado o tarjeta de captura interna). | M | A | Verificarlo en F0 antes de escribir código; rutas alternativas legítimas: capturadora UVC sobre salida de video, cámara UVC en puerto óptico, SDK publicado (ARCHITECTURE.md §6.6). | F0 |
+| T1 | ~~El colposcopio **no es UVC** (protocolo propietario, video cifrado o tarjeta de captura interna).~~ **Descartado por verificación empírica en Windows 10** para el Goldcare GC 3000E del sitio piloto: la app "Cámara" lo muestra sin software del fabricante ni dongle. | — | — | **Lección aprendida:** verificar con una app genérica *antes* de escribir código ahorró diseñar rutas innecesarias. Las vías de contingencia (ARCHITECTURE.md §6.6) siguen documentadas. Ver T16. | F0 ✅ |
 | T2 | Dispositivos UVC **no conformes** (descriptores erróneos, formatos anunciados que no funcionan). | M | M | Perfiles con *quirks*; `diagnose`; probar formatos reales y no solo los anunciados. | F1–F3 |
 | T3 | Diferencias entre backends del SO (MSMF vs DirectShow, V4L2, AVFoundation): resoluciones, latencia, nombres. | A | M | Selección de API por perfil; enumeración nativa complementaria; matriz de pruebas por SO en HARDWARE.md. | F1, F3 |
 | T4 | OpenCV no expone la lista de formatos ni nombres de dispositivo de forma fiable. | A | M | Enumeración nativa por SO; evaluar Qt Multimedia como backend alternativo (F3). | F1, F3 |
 | T5 | **Ancho de banda USB 2.0** insuficiente para 1080p sin compresión. | A | M | Preferir MJPEG; YUY2 a menor FPS solo para imagen fija; documentar por modelo. | F1 |
 | T6 | Rendimiento insuficiente en **equipos antiguos** (CPU/RAM). | M | A | Equipo de referencia definido en F0; grabación MJPEG sin recodificar; vista previa reducida; perfiles de rendimiento. | F0–F2 |
-| T7 | **SO antiguos** (Windows 7/8, 32 bits) no soportados por Python 3.11+/Qt 6. | M | A | Confirmar parque real en F0; si es significativo, evaluar variante ligera (Tkinter) o recomendar Linux ligero en el mismo equipo. | F0 |
+| T7 | ~~**SO antiguos** (Windows 7/8, 32 bits) no soportados por Python 3.11+/Qt 6.~~ **Cerrado en F0:** los sitios usan Windows 10/11 de 64 bits. Se reabre si un sitio nuevo tiene equipos antiguos. | B | A | Verificar el SO en la lista previa de cada sitio nuevo (T16). | F0 ✅ |
 | T8 | **Pérdida de datos** por corte de energía, cierre forzado o desconexión. | M | A | Escritura atómica + `fsync`; video segmentado; recuperación al inicio; confirmación solo tras persistir. | F1 |
 | T9 | **Disco lleno** durante una grabación. | M | M | Verificación previa de espacio; umbral de parada segura; aviso visible. | F1–F2 |
 | T10 | **Fidelidad de color** variable (balance de blancos automático), crítica en colposcopia (acetoblanco, lugol). | A | M | Bloqueo de AWB/exposición por perfil; registro de controles en metadatos; guía con carta de color. No se ofrece corrección "diagnóstica". | F3 |
@@ -25,6 +26,8 @@
 | T13 | Tamaño del paquete (Qt + OpenCV) grande para distribución offline. | M | B | Excluir módulos Qt no usados; `opencv-python-headless`; medir en F4. | F4 |
 | T14 | libuvc requiere desvincular/reemplazar el controlador del SO y puede dejar la cámara inutilizable para otras apps. | M | M | Backend opcional y no predeterminado; advertencias claras; instrucciones de reversión. | F3 |
 | T15 | Licencias de dependencias (LGPL de Qt/FFmpeg, patentes de H.264). | M | M | SBOM; enlace dinámico de Qt; preferir MJPEG/códecs libres de regalías; revisión en F4. | F0, F4 |
+| T16 | **En otros sitios, el mismo modelo (GC 3000E) podría no ser UVC** o requerir otro firmware, revisión de hardware o configuración (otro sensor, salida solo analógica, modo de video distinto). | M | A | **Verificación previa obligatoria en cada sitio** antes de instalar: (1) app Cámara de Windows sin software del fabricante ni dongle; (2) `colpo list` y `colpo list --probe`; (3) registrar VID:PID, resolución y FPS reales en HARDWARE.md. Si falla, aplicar las vías de contingencia (capturadora UVC, cámara en puerto óptico) en lugar de forzar la vía principal. | F1, F4 |
+| T17 | Con el driver de Windows, **la resolución o los FPS reales difieren** de lo pedido (DirectShow vs Media Foundation) o el FPS informado no coincide con el real. | A | M | `UVCCamera` mide tamaño y FPS sobre los frames reales; la grabación usa ritmo constante basado en marcas de tiempo; `--backend msmf` como alternativa. Documentado en CAPTURE.md. | F1 |
 
 ## 2. Riesgos legales
 
@@ -43,7 +46,7 @@
 | ID | Riesgo | P | I | Mitigación | Fase |
 |---|---|---|---|---|---|
 | R1 | El software podría ser considerado **software como dispositivo médico (SaMD)** si se usa o promociona para diagnóstico (p. ej., MDR UE 2017/745 regla 11; FDA; ANVISA; COFEPRIS; ANMAT; INVIMA; ISP; DIGEMID). | M | A | Uso previsto exclusivamente **educativo**; sin funciones de diagnóstico, medición o apoyo a la decisión; lenguaje cuidadoso en documentación y difusión. | Todas |
-| R2 | **Desviación de uso** (*intended use creep*): una institución lo usa en atención clínica rutinaria. | M | A | Aviso en arranque, "Acerca de", metadatos (`intended_use`) y marca de agua en exportaciones; guía institucional; plantilla de acuerdo de uso. | F2, F5 |
+| R2 | **Desviación de uso** (*intended use creep*): una institución lo usa en atención clínica rutinaria. | M | A | Aviso en arranque, "Acerca de", título de la ventana, metadatos (`intended_use`) y `LEEME.txt` de las exportaciones; guía institucional; plantilla de acuerdo de uso. Marca de agua: opción desactivada (F3+), no por defecto. | F2, F5 |
 | R3 | Conectar un **PC no médico** a un equipo médico en el entorno del paciente (IEC 60601-1, sistemas electromédicos): corrientes de fuga. | M | A | Guía: consultar a ingeniería biomédica; usar portátil con batería o aislamiento galvánico USB / transformador de aislamiento; no tocar al paciente y al PC simultáneamente. | F2, F4 |
 | R4 | Conectar el software puede afectar la **garantía o conformidad** del equipo del fabricante. | M | M | Recomendar uso en equipos fuera de servicio clínico o con autorización de la institución; documentar. | F0 |
 | R5 | Si en el futuro se quisiera uso clínico, se necesitarían procesos (ISO 13485, IEC 62304, ISO 14971, IEC 62366-1) que el proyecto no tiene. | — | — | Registrar como no-objetivo; buenas prácticas (trazabilidad, pruebas, ADR) facilitarían un fork certificado por terceros. | — |
@@ -56,10 +59,10 @@
 | P2 | **Texto superpuesto (OSD)** de la cámara con fecha/hora o nombre de la clínica. | M | M | Máscaras de privacidad por perfil; detección en F0 de qué modelos lo hacen. | F0, F3 |
 | P3 | **Audio** con nombres o conversaciones. | M | A | Sin pista de audio por defecto. | F1 |
 | P4 | Robo o pérdida del equipo con datos sin cifrar. | M | A | Recomendar cifrado de disco completo; opción futura de cifrado a nivel de app. | F4 |
-| P5 | **Re-identificación** al combinar imágenes con otras fuentes (fecha/hora exacta). | B | A | Precisión temporal reducida por defecto; reasignación de `study_id` al exportar. | F1–F2 |
+| P5 | **Re-identificación** al combinar la **hora exacta** de captura (requisito del proyecto) con agendas o registros del sitio. | M | A | La hora se conserva por decisión de F0; ningún identificador personal se registra. Mitigación: control de acceso a la carpeta de datos, revisión antes de compartir, reasignación de `study_id` al exportar, y la tabla de correspondencia (si existe) fuera de la app. Ver PRIVACY.md. | F1–F4 |
 | P6 | Contribuidores adjuntan **imágenes de pacientes en issues** públicos. | M | A | Advertencias en plantillas; moderación y borrado; nunca aceptar imágenes clínicas en el repositorio. | F5 |
 | P7 | Huellas en el SO: miniaturas, archivos recientes, copias de seguridad automáticas en la nube. | M | M | Guía para TI; carpeta de datos excluible de sincronización; sin integración con el *shell*. | F4 |
-| P8 | Cumplimiento de leyes de protección de datos (RGPD, LGPD, Ley 25.326, LFPDPPP, Ley 1581, Ley 19.628/21.719, etc.). | M | A | Minimización por diseño; responsabilidad del responsable del tratamiento (la institución); plantilla de DPIA en F5. | F5 |
+| P8 | Cumplimiento de leyes de protección de datos. Sitio piloto: **Perú, Ley 29733** y su reglamento (datos de salud = datos sensibles). Otros sitios: RGPD, LGPD, Ley 25.326, LFPDPPP, Ley 1581, etc. | M | A | Minimización por diseño; sin pacientes en F1–F3; desde F4, captura solo con aprobación del comité de ética, consentimiento informado y anonimización obligatoria (PRIVACY.md); responsabilidad del titular del banco de datos (la institución); plantilla de DPIA en F5. | F4, F5 |
 
 ## 5. Por qué NO se emula el dongle
 

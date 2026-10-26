@@ -38,6 +38,7 @@
 
 | Marca | Modelo | VID:PID | Clase USB | Resolución(es) / formato / FPS verificados | SO probados | Backend | Estado | Notas | Reportado (fecha) |
 |---|---|---|---|---|---|---|---|---|---|
+| GOLDCARE | GC 3000E | TBD — se obtendrá con `colpo list` o `Get-PnpDevice -Class Camera,Image` | `UVC` (confirmado) | TBD (medir con `colpo list --probe`) | Windows 10 | App "Cámara" de Windows; `opencv/dshow` pendiente | 🟡 | Se ve como cámara UVC en la app "Cámara" de Windows 10 **sin** el software del fabricante y **sin** el dongle conectado. Pendiente: VID:PID, formatos/FPS reales, prueba de `colpo record` (CAPTURE.md §6). Dongle presente (no usado). Sitio piloto único. | 2026-10 |
 | *Ejemplo (ficticio)* | *Modelo X-100* | `0000:0000` | `UVC-IAD` | 1920×1080 MJPG @30; 1280×720 YUY2 @10 | Win 11, Ubuntu 24.04 | `opencv/dshow`, `opencv/v4l2` | 🟡 | AWB inestable; fijar balance de blancos. OSD con fecha en esquina sup. izq. → máscara. Dongle presente (no usado). | 2026-10 |
 | | | | | | | | ❔ | | |
 | | | | | | | | ❔ | | |
@@ -51,6 +52,19 @@
 ## Cómo obtener los datos
 
 ### VID:PID y clase USB
+
+**Forma recomendada (Windows 10/11):** con el colposcopio conectado, ejecutar
+`colpo list` (columna `VID:PID`) y `colpo list --probe` (resolución y FPS reales).
+
+Alternativa en PowerShell:
+
+```powershell
+Get-PnpDevice -Class Camera,Image -PresentOnly | Select-Object FriendlyName, InstanceId
+```
+
+En `InstanceId` (p. ej. `USB\VID_XXXX&PID_YYYY&MI_00\...`) copia **solo** `VID_XXXX` y
+`PID_YYYY`. **No** copies el resto de la cadena: puede contener un número de serie o un
+identificador único del equipo.
 
 | SO | Comando / herramienta |
 |---|---|

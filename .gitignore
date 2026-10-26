@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+wheels/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Capturas: nunca se versionan (pueden contener datos de pacientes)
+capturas/
+/*.png
+/*.mp4
+/*.avi
+/*.mkv
+.*.recording.*
+
+# Sistema
+.DS_Store
+Thumbs.db

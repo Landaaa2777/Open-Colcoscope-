@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-colposcope"
+version = "0.1.0"
+description = "Captura offline de imagen y video de colposcopios USB (UVC). Prototipo educativo, no es un producto médico."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Open Colposcope contributors" }]
+keywords = ["colposcopy", "uvc", "opencv", "education", "offline"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Education",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video :: Capture",
+]
+dependencies = [
+    # Sin variante GUI de OpenCV: la ventana de vista previa usa PySide6 (evita
+    # el conflicto de plugins Qt entre opencv-python y PySide6).
+    "opencv-python-headless>=4.8",
+    "numpy>=1.24",
+    # Nombres y VID:PID de cámaras con el índice que espera OpenCV (MIT).
+    "cv2-enumerate-cameras>=1.1",
+    "PySide6-Essentials>=6.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+colpo = "colpo.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "examples"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["colpo", "conftest", "synthetic_video"]
