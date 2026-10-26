@@ -265,3 +265,29 @@ def test_file_source_waits_for_slow_writer_instead_of_dropping(
         stats = cam.stop_recording()
     assert stats.frames_dropped == 0
     assert stats.frames_written == 20
+
+
+def test_mp4_falls_back_to_mp4v_when_h264_is_unavailable(
+    synthetic_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from colpo import capture
+
+    monkeypatch.setattr(capture, "video_codec_candidates", lambda _s: ("H264", "mp4v"))
+    attempts: list[str] = []
+
+    def writer_factory(path: str, fourcc: int, fps: float, size: tuple[int, int]):
+        code = "".join(chr((fourcc >> 8 * i) & 0xFF) for i in range(4))
+        attempts.append(code)
+        if code == "H264":
+            return _BrokenWriter(opened=False)  # p. ej. Windows "N" sin codificador H.264
+        return cv2.VideoWriter(path, fourcc, fps, size)
+
+    out = tmp_path / "v.mp4"
+    with UVCCamera(source=synthetic_video, writer_factory=writer_factory) as cam:
+        cam.start_recording(out)
+        for _ in range(10):
+            cam.read_frame()
+        stats = cam.stop_recording()
+    assert attempts == ["H264", "mp4v"]
+    assert stats.codec == "mp4v"
+    assert count_frames(out)[0] == 10

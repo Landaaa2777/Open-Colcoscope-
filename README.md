@@ -18,8 +18,10 @@ contextos con recursos limitados.
 
 - **F0 — Descubrimiento: cerrada.** Goldcare GC 3000E confirmado como UVC en Windows 10.
 - **F1 — Captura UVC: entregada la parte F1.a** (`UVCCamera` + CLI `colpo` + pruebas con
-  video sintético). Pendiente F1.b (metadatos *sidecar*) y la prueba manual con el GC 3000E.
-  Ver [docs/ROADMAP.md](docs/ROADMAP.md).
+  video sintético).
+- **F2 — Interfaz gráfica: v0.2.0-ui** (`colpo-ui`, metadatos JSON, ES/EN). Pendiente la
+  prueba manual de 5 minutos con el GC 3000E. Ver [docs/ROADMAP.md](docs/ROADMAP.md) y
+  [CHANGELOG.md](CHANGELOG.md).
 
 ## Inicio rápido (Windows 10/11 x64)
 
@@ -27,13 +29,15 @@ contextos con recursos limitados.
 py -3 -m venv .venv
 .venv\Scripts\activate
 pip install -e .
-colpo list
-colpo preview --index 0
-colpo record --index 0 --out test.mp4 --duration 5
+colpo-ui
 ```
 
+Guía completa de la aplicación: [docs/USER_GUIDE.md](docs/USER_GUIDE.md). Herramientas de
+línea de comandos (diagnóstico): `colpo list`, `colpo preview --index 0`,
+`colpo record --index 0 --out test.mp4 --duration 5`.
+
 Sin colposcopio: `python examples\synthetic_video.py demo.avi` y luego
-`colpo preview --source demo.avi`. Detalles y limitaciones: [docs/CAPTURE.md](docs/CAPTURE.md).
+`colpo-ui --source demo.avi`. Detalles y limitaciones: [docs/CAPTURE.md](docs/CAPTURE.md).
 
 ## Desarrollo
 
@@ -50,6 +54,7 @@ Las pruebas no necesitan hardware: usan video sintético y una cámara simulada.
 | Documento | Contenido |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Objetivos, no-objetivos, actores, casos de uso, componentes, HAL, flujo de captura, archivos y metadatos. |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Guía de la aplicación: instalación, flujo de captura, botones, archivos, verificación sin red. |
 | [docs/CAPTURE.md](docs/CAPTURE.md) | Captura UVC de F1: comandos, comportamiento, limitaciones, protocolo con el GC 3000E. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Fases F0–F5 con entregables, estado y criterios de aceptación. |
 | [docs/RISKS.md](docs/RISKS.md) | Riesgos técnicos, legales, regulatorios y de privacidad. |

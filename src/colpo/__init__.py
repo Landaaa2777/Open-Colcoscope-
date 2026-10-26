@@ -12,14 +12,17 @@ from colpo.errors import (
     ColpoError,
     DeviceDisconnectedError,
     DeviceOpenError,
+    DiskFullError,
     EndOfStreamError,
     FrameReadError,
+    MetadataError,
+    NotesRejectedError,
     RecordingError,
     SnapshotError,
     UnsupportedFormatError,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 INTENDED_USE = "educational-not-for-diagnosis"
 DISCLAIMER = (
@@ -36,9 +39,12 @@ __all__ = [
     "DeviceDisconnectedError",
     "DeviceInfo",
     "DeviceOpenError",
+    "DiskFullError",
     "EndOfStreamError",
     "Frame",
     "FrameReadError",
+    "MetadataError",
+    "NotesRejectedError",
     "RecordingError",
     "RecordingStats",
     "SnapshotError",

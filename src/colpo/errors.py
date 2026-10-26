@@ -45,3 +45,22 @@ class SnapshotError(ColpoError):
 
 class RecordingError(ColpoError):
     """Falló el inicio, la escritura o el cierre de una grabación."""
+
+
+class DiskFullError(ColpoError):
+    """No hay espacio suficiente en disco para guardar la captura."""
+
+
+class MetadataError(ColpoError):
+    """Metadatos inválidos (campo fuera de la lista cerrada, valor no permitido...)."""
+
+
+class NotesRejectedError(MetadataError):
+    """Las notas parecen contener datos que identifican a la paciente.
+
+    ``reasons`` contiene códigos estables (p. ej. ``"numero_largo"``) que la UI traduce.
+    """
+
+    def __init__(self, message: str, reasons: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.reasons = reasons

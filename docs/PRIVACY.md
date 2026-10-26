@@ -16,21 +16,24 @@
    Verificado por pruebas automáticas ([ARCHITECTURE.md §8.6](ARCHITECTURE.md#86-garantía-sin-red)).
 4. **Sin audio.** Las conversaciones pueden contener nombres.
 5. **Sin metadatos incrustados.** Los PNG no llevan EXIF/XMP/GPS.
-6. **Seudónimo aleatorio.** El `study_id` (F1.b) es aleatorio. Si la institución necesita
+6. **Seudónimo aleatorio.** El `id_estudio` es aleatorio. Si la institución necesita
    volver a vincular un estudio con una persona, la tabla de correspondencia se guarda **fuera
    de la aplicación**, bajo custodia institucional.
 7. **Lista blanca.** El esquema de metadatos rechaza cualquier campo no definido.
 
 ## 2. Inventario de datos
 
-| Dato | F1.a (actual) | F1.b / F2 | ¿Identifica al paciente? |
-|---|---|---|---|
-| Imagen PNG / video MP4-AVI-MKV | ✅ | ✅ | La imagen colposcópica en sí no suele identificar, pero puede contener texto superpuesto (OSD) u objetos identificables: revisar antes de compartir. |
-| Fecha y hora exactas de captura | En el nombre de archivo (`preview`) | Sidecar `captured_at` | No directamente; es cuasi-identificador (§3). |
-| Etapa IFCPC (basal, solución salina, ácido acético, lugol, filtro verde) | — | Sidecar | No. |
-| VID:PID y modelo del colposcopio | — | Sidecar | No (no se guarda número de serie). |
-| `study_id` aleatorio | — | ✅ | No por sí mismo. |
-| Texto libre | — | Desactivado por defecto | Riesgo alto: puede contener nombres. |
+Desde v0.2.0-ui cada captura lleva un JSON con **exactamente** estos campos (ver
+[ARCHITECTURE.md §8.3](ARCHITECTURE.md#83-metadatos-por-captura-esquema-f2-lista-cerrada)):
+
+| Dato | Dónde | ¿Identifica a la paciente? |
+|---|---|---|
+| Imagen PNG / video MP4 | Archivo | La imagen colposcópica en sí no suele identificar, pero puede contener texto superpuesto (OSD) u objetos identificables: revisar antes de compartir. |
+| `id_estudio` (seudónimo aleatorio) | JSON y nombre de carpeta | No por sí mismo. |
+| `timestamp` (hora exacta al segundo) | JSON y nombre de archivo | No directamente; es cuasi-identificador (§3). |
+| `etapa_ifcpc`, `resolucion`, `fps`, `tipo`, `sha256` | JSON | No. |
+| `notas` (opcional) | JSON | Riesgo: pueden contener datos personales. Se filtran (DNI, teléfonos, fechas, correos, palabras como "nombre") y, si parecen contener identificadores, **no se guardan**. El filtro es una red de seguridad, no una garantía. |
+| VID:PID / modelo del colposcopio | **No se guarda** en F2 | — |
 | Número de serie del equipo, usuario de Windows, nombre del PC, ubicación | **Nunca** | **Nunca** | — |
 
 ## 3. Hora exacta: decisión y riesgo residual
@@ -46,7 +49,7 @@ agendas. Mitigaciones:
 - Control de acceso a la carpeta de datos (cuenta de Windows con contraseña; solo personal autorizado).
 - Cifrado del disco (BitLocker o "Cifrado de dispositivo" de Windows).
 - Revisión antes de compartir; los paquetes educativos se generan con el exportador (F2), que
-  reasigna `study_id` y excluye el texto libre.
+  reasigna `id_estudio` y excluye el texto libre.
 - No publicar capturas junto con fechas de servicio, nombres de sala u otros datos del sitio.
 - Si un comité de ética lo exige, se podrá añadir una opción de exportación que desplace las
   horas. Estará desactivada por defecto y la hora original no se modifica.
@@ -76,7 +79,7 @@ Solo puede iniciarse cuando **todas** estas condiciones se cumplan y estén docu
       Protección de Datos Personales cuando corresponda.
 - [ ] **Anonimización obligatoria** antes de cualquier uso fuera del sitio de captura: ningún
       identificador personal; revisión visual de cada imagen (texto superpuesto, objetos
-      identificables); `study_id` reasignado; tabla de correspondencia, si existe, solo en
+      identificables); `id_estudio` reasignado; tabla de correspondencia, si existe, solo en
       custodia institucional.
 - [ ] **Seguridad del equipo:** cuenta con contraseña, disco cifrado, carpeta de datos excluida
       de OneDrive u otra sincronización, sin acceso de terceros.

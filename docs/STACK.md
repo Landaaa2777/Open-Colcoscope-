@@ -29,14 +29,14 @@ La vía de captura principal es UVC + OpenCV (ARCHITECTURE.md §6.0).
 | Introspección USB | **`pyusb` + libusb**, solo lectura, para `diagnose` (F1.b/F3). **No** es dependencia de la captura | Lectura de descriptores sin reclamar la interfaz de video. |
 | UVC avanzado | **libuvc** (opcional, F3) | Controles UVC y *still trigger* cuando el SO no los expone; no predeterminado (requiere cambiar controlador). |
 | GUI | **PySide6 (Qt 6)**, paquete `PySide6-Essentials` | Video fluido, HiDPI, accesibilidad, i18n (Qt Linguist), LGPL, binding oficial de Qt. En F1 solo se usa para la ventana de vista previa. |
-| Video (grabación) | OpenCV `VideoWriter`: `.mp4` → MPEG-4 Part 2 (`mp4v`); `.avi`/`.mkv` → MJPEG. Evaluar **PyAV** (FFmpeg) para *passthrough* MJPEG sin recodificar | `.mp4` es el formato pedido para F1 y se reproduce en cualquier equipo; MJPEG da más calidad con menos CPU. H.264 no viene en las ruedas de OpenCV. |
+| Video (grabación) | OpenCV `VideoWriter`: `.mp4` → en Windows, H.264 vía el codificador de Media Foundation incluido en el SO; si no está disponible, MPEG-4 Part 2 (`mp4v`). `.avi`/`.mkv` → MJPEG. Evaluar **PyAV** (FFmpeg) para *passthrough* MJPEG sin recodificar | `.mp4` es el formato pedido para F1 y se reproduce en cualquier equipo; MJPEG da más calidad con menos CPU. H.264 no viene en las ruedas de OpenCV. |
 | Metadatos | JSON *sidecar* + **JSON Schema** (validación con `jsonschema` o `pydantic`) | Legible por humanos, versionable, fácil de auditar. |
 | Índice | **SQLite** (stdlib `sqlite3`) | Sin servidor; reconstruible desde los sidecars. |
 | Configuración | **TOML** (`tomllib` stdlib para lectura) | Legible; estándar en Python. |
 | Pruebas | `pytest`, `pytest-qt`, backend `replay`, `hypothesis` (opcional) | Probar sin hardware. |
 | Calidad | `ruff`, `mypy`, `pre-commit` | Estándar actual, rápido. |
 | Empaquetado | **PyInstaller para Windows 10/11 x64** (prioritario); AppImage/macOS solo si hay demanda | Ver tabla §3.7. |
-| i18n | Qt Linguist (`.ts`) para la GUI; `gettext` para CLI si hace falta | Flujo de traducción comunitario conocido. |
+| i18n | **Catálogos JSON** planos (`src/colpo/ui/i18n/es.json`, `en.json`) con un `Translator` propio (decidido en F2) | Sin paso de compilación (`lrelease`), fáciles de editar y revisar, cambio de idioma en caliente trivial, verificables en CI (mismas claves y marcadores). Contras: sin plurales automáticos ni Qt Linguist; migrable si crece el número de idiomas. |
 | Documentación | Markdown en `docs/` (+ MkDocs opcional, compilado offline) | Baja barrera de entrada. |
 
 ## 3. Alternativas evaluadas

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-colposcope"
-version = "0.1.0"
+version = "0.2.0"
 description = "Captura offline de imagen y video de colposcopios USB (UVC). Prototipo educativo, no es un producto médico."
 readme = "README.md"
 license = "Apache-2.0"
@@ -37,8 +37,16 @@ dev = ["pytest>=8", "ruff>=0.5"]
 [project.scripts]
 colpo = "colpo.cli:main"
 
+[project.gui-scripts]
+# Sin ventana de consola en Windows. Para ver mensajes de error en consola:
+# python -m colpo.ui
+colpo-ui = "colpo.ui.app:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"colpo.ui.i18n" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

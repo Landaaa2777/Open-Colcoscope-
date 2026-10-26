@@ -87,12 +87,14 @@ Formatos de salida:
 
 | Extensión | Códec | Notas |
 |---|---|---|
-| `.mp4` | MPEG-4 Part 2 (`mp4v`) | Se reproduce en VLC y en las apps de Windows. Con pérdida; recodifica (usa CPU). |
+| `.mp4` | Windows: **H.264** (codificador de Media Foundation del propio Windows); si no está disponible, MPEG-4 Part 2 (`mp4v`). Otros SO: `mp4v`. | El códec usado se informa en `RecordingStats.codec` y en la UI. Con pérdida; recodifica (usa CPU). |
 | `.avi` | MJPEG | Más calidad por frame y menos CPU; archivos más grandes. Recomendado si hay frames perdidos. |
 | `.mkv` | MJPEG | Igual que `.avi`, en contenedor Matroska. |
 | `.png` | — | Única opción para fotos (sin pérdida). |
 
-H.264 **no** está disponible: las ruedas de OpenCV no lo incluyen por licencias y patentes.
+Las ruedas de OpenCV no incluyen un codificador H.264 propio (licencias y patentes); en
+Windows se usa el que trae el sistema operativo. En ediciones "N" sin *Media Feature Pack*
+no existe, y se graba con `mp4v`.
 
 Errores (todos heredan de `ColpoError`):
 

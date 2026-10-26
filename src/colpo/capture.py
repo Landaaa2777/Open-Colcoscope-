@@ -42,9 +42,33 @@ from colpo.errors import (
 
 log = logging.getLogger(__name__)
 
-# Extensión -> FOURCC. H.264 no se ofrece: las ruedas de OpenCV no lo incluyen
-# (licencias/patentes); ver docs/CAPTURE.md.
+# Extensión -> FOURCC disponible en cualquier plataforma (respaldo garantizado).
 VIDEO_CODECS: dict[str, str] = {".mp4": "mp4v", ".avi": "MJPG", ".mkv": "MJPG"}
+# H.264 no viene en las ruedas de OpenCV (licencias/patentes), pero Windows 10/11
+# trae un codificador H.264 propio en Media Foundation: se intenta primero allí.
+H264_FOURCC = "H264"
+
+
+def video_codec_candidates(suffix: str, system: str | None = None) -> tuple[str, ...]:
+    """Códecs a intentar, en orden, para una extensión de video.
+
+    ``.mp4`` en Windows: H.264 (Media Foundation) y, si no está disponible
+    (p. ej. ediciones "N" sin Media Feature Pack), ``mp4v``. En el resto de
+    casos, solo el códec de :data:`VIDEO_CODECS`.
+    """
+    fallback = VIDEO_CODECS[suffix.lower()]
+    if suffix.lower() == ".mp4" and (system or platform.system()) == "Windows":
+        return (H264_FOURCC, fallback)
+    return (fallback,)
+
+
+def open_video_writer(path: str, fourcc: int, fps: float, size: tuple[int, int]) -> cv2.VideoWriter:
+    """``writer_factory`` predeterminado: usa Media Foundation para H.264 en Windows."""
+    if fourcc == cv2.VideoWriter_fourcc(*H264_FOURCC) and platform.system() == "Windows":
+        return cv2.VideoWriter(path, cv2.CAP_MSMF, fourcc, fps, size)
+    return cv2.VideoWriter(path, fourcc, fps, size)
+
+
 SNAPSHOT_EXTENSIONS: tuple[str, ...] = (".png",)
 
 FALLBACK_FPS = 30.0
@@ -178,7 +202,7 @@ class _VideoRecorder:
     def __init__(
         self,
         path: Path,
-        codec: str,
+        codecs: tuple[str, ...],
         fps: float,
         size: tuple[int, int],
         writer_factory: Callable[..., cv2.VideoWriter],
@@ -188,21 +212,11 @@ class _VideoRecorder:
         self.path = path
         self._block_when_full = block_when_full
         self.tmp_path = path.with_name(f".{path.stem}.recording{path.suffix}")
-        self.codec = codec
         self.fps = fps
         self.size = size
         self._max_repeats = max(1, int(self.MAX_GAP_S * fps))
 
-        self._writer = writer_factory(str(self.tmp_path), cv2.VideoWriter_fourcc(*codec), fps, size)
-        if not self._writer.isOpened():
-            self._writer.release()
-            with contextlib.suppress(OSError):
-                self.tmp_path.unlink()
-            raise RecordingError(
-                f"No se pudo crear el video '{path}' con el códec {codec}. "
-                "Pruebe la extensión .avi (MJPEG). En Windows, OpenCV puede fallar con rutas "
-                "que contienen caracteres no ASCII (tildes, ñ)."
-            )
+        self.codec, self._writer = self._open_first_available(codecs, writer_factory)
 
         self._queue: queue.Queue[tuple[np.ndarray, int] | None] = queue.Queue(maxsize=queue_size)
         self._error: BaseException | None = None
@@ -212,6 +226,26 @@ class _VideoRecorder:
         self._started = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="colpo-recorder", daemon=True)
         self._thread.start()
+
+    def _open_first_available(
+        self, codecs: tuple[str, ...], writer_factory: Callable[..., cv2.VideoWriter]
+    ) -> tuple[str, cv2.VideoWriter]:
+        for codec in codecs:
+            writer = writer_factory(
+                str(self.tmp_path), cv2.VideoWriter_fourcc(*codec), self.fps, self.size
+            )
+            if writer.isOpened():
+                if codec != codecs[0]:
+                    log.info("Códec %s no disponible; se usa %s.", codecs[0], codec)
+                return codec, writer
+            writer.release()
+            with contextlib.suppress(OSError):
+                self.tmp_path.unlink()
+        raise RecordingError(
+            f"No se pudo crear el video '{self.path}' con los códecs {', '.join(codecs)}. "
+            "Pruebe la extensión .avi (MJPEG). En Windows, OpenCV puede fallar con rutas "
+            "que contienen caracteres no ASCII (tildes, ñ)."
+        )
 
     def _run(self) -> None:
         try:
@@ -345,7 +379,7 @@ class UVCCamera:
         warmup_frames: int = 5,
         max_read_failures: int = 10,
         capture_factory: Callable[..., cv2.VideoCapture] = cv2.VideoCapture,
-        writer_factory: Callable[..., cv2.VideoWriter] = cv2.VideoWriter,
+        writer_factory: Callable[..., cv2.VideoWriter] = open_video_writer,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if (index is None) == (source is None):
@@ -577,6 +611,9 @@ class UVCCamera:
     ) -> Path:
         """Empieza a grabar los frames que se lean con :meth:`read_frame`.
 
+        Códec: ver :func:`video_codec_candidates` (``.mp4`` intenta H.264 en
+        Windows y recurre a ``mp4v``); el usado queda en ``RecordingStats.codec``.
+
         ``fps`` por defecto: los medidos con :meth:`measure_fps` (redondeados
         con :func:`nominal_fps`), si no los informados por el driver o el
         archivo, y si no son válidos, 30. ``queue_size`` limita los frames en
@@ -590,8 +627,7 @@ class UVCCamera:
         if self._recorder is not None:
             raise RecordingError("Ya hay una grabación en curso.")
         target = Path(path)
-        codec = VIDEO_CODECS.get(target.suffix.lower())
-        if codec is None:
+        if target.suffix.lower() not in VIDEO_CODECS:
             valid = ", ".join(VIDEO_CODECS)
             raise UnsupportedFormatError(
                 f"Formato de video no soportado: '{target.suffix}'. Use {valid}."
@@ -622,7 +658,7 @@ class UVCCamera:
             raise RecordingError(f"No se pudo crear la carpeta '{target.parent}': {exc}") from exc
         self._recorder = _VideoRecorder(
             target,
-            codec,
+            video_codec_candidates(target.suffix),
             chosen,
             (info.width, info.height),
             self._writer_factory,

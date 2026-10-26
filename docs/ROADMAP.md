@@ -114,9 +114,16 @@ entregable en la tabla siguiente.
 
 ---
 
-## F2 — Interfaz de usuario
+## F2 — Interfaz de usuario (v0.2.0-ui: implementada; pendiente prueba con el GC 3000E)
 
 **Objetivo:** aplicación de escritorio usable por docentes sin conocimientos técnicos.
+
+**Alcance acordado para v0.2.0-ui:** ventana PySide6 (`colpo-ui`) con selector de cámara,
+vista previa, resolución/FPS, foto, grabación MP4 (H.264 con `mp4v` de respaldo), etapa
+IFCPC, notas sin identificadores, banner permanente, errores visibles, i18n ES/EN en caliente,
+metadatos JSON con lista cerrada y `docs/USER_GUIDE.md`. Fuera de F2 (pasa a F3): comparación
+lado a lado, anotaciones sobre la imagen, exportación (ZIP/PDF), marca de agua visible en la
+UI, integración con historias clínicas.
 
 ### Entregables
 
@@ -124,8 +131,8 @@ entregable en la tabla siguiente.
 |---|---|
 | F2.1 | GUI PySide6: selector de dispositivo, vista previa, captura, grabación, indicadores de estado (FPS, resolución, espacio libre, frames perdidos). |
 | F2.2 | Flujo de estudio anónimo (abrir/cerrar), etiquetado por etapa con vocabulario IFCPC configurable. |
-| F2.3 | Galería del estudio con comparación lado a lado de etapas. |
-| F2.4 | Exportación educativa (ZIP + manifiesto, sin marca de agua; la marca de agua opcional y desactivada llega en F3+). |
+| F2.3 | ~~Galería del estudio con comparación lado a lado de etapas.~~ **Movido a F3.** |
+| F2.4 | ~~Exportación educativa.~~ **Movido a F3.** En F2 solo existe el gancho de marca de agua, desactivado. |
 | F2.5 | Disparo por teclado y ratón (no hay pedal conocido); un pedal HID que emule teclado funcionará sin cambios. |
 | F2.6 | Avisos permanentes de uso previsto ("educativo — no diagnóstico") en arranque, "Acerca de" y exportaciones. |
 | F2.7 | Internacionalización: español e inglés completos desde F2; infraestructura para más idiomas. |

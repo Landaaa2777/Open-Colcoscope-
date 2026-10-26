@@ -5,8 +5,8 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | F0 cerrada · F1 en curso |
-| Versión del documento | 0.2 |
+| Estado | F0 cerrada · F1.a entregada · F2 (UI) entregada, pendiente de prueba con el GC 3000E |
+| Versión del documento | 0.3 |
 | Documentos relacionados | [ROADMAP](ROADMAP.md) · [RISKS](RISKS.md) · [HARDWARE](HARDWARE.md) · [STACK](STACK.md) · [CAPTURE](CAPTURE.md) · [PRIVACY](PRIVACY.md) · [LEGAL](LEGAL.md) |
 
 ---
@@ -232,6 +232,20 @@ flowchart TB
 | Exportador educativo | Genera ZIP + manifiesto + SHA-256. Sin marca de agua por defecto (opción desactivada, F3+). | No sube nada a ningún sitio. |
 | Diagnóstico de hardware | Reporta descriptores y capacidades sin números de serie. | No envía el reporte; el usuario decide compartirlo. |
 | Registro de backends | Descubre backends, asocia perfiles por VID:PID, elige el mejor backend disponible. | No contiene lógica específica de un modelo. |
+
+### 6.3.1 Implementación actual (F2)
+
+| Módulo | Capa | Responsabilidad |
+|---|---|---|
+| `colpo/capture.py` | Núcleo | `UVCCamera` (F1): abrir, leer, foto PNG, grabación con ritmo constante; `.mp4` intenta H.264 (Media Foundation, Windows) y recurre a `mp4v`. |
+| `colpo/devices.py` | Núcleo | Enumeración (índice, nombre, VID:PID) y APIs disponibles por SO. |
+| `colpo/metadata.py` | Núcleo | Esquema cerrado de metadatos, `id_estudio`, hora exacta, SHA-256, filtro de notas. |
+| `colpo/storage.py` | Núcleo | Carpeta de datos, nombres de archivo, espacio libre, detección de disco lleno. |
+| `colpo/session.py` | Núcleo | `CaptureSession`: estudio, etapa, notas; foto/video + JSON. |
+| `colpo/live.py` | Núcleo | `LiveCapture`: hilo dueño de la cámara; eventos sin Qt. |
+| `colpo/watermark.py` | Núcleo | Gancho de marca de agua (desactivado; sin control en la UI). |
+| `colpo/ui/app.py` | UI | Ventana PySide6; consume `LiveCapture`/`CaptureSession`. **No importa OpenCV ni NumPy** (verificado por prueba). |
+| `colpo/ui/i18n/` | UI | Catálogos `es.json`/`en.json` y `Translator`. |
 
 ### 6.4 Capa de abstracción de hardware (HAL)
 
@@ -479,66 +493,55 @@ cierra y el sidecar registra la interrupción.
 9. **Cifrado en reposo**: se recomienda cifrado de disco completo del SO (BitLocker, FileVault,
    LUKS). Cifrado a nivel de aplicación queda como mejora futura.
 
-### 8.2 Estructura en disco
+### 8.2 Estructura en disco (implementada en F2)
 
 ```text
-OpenColposcopeData/              # configurable; en modo portable, junto al ejecutable
-├── config.toml                  # configuración local
-├── library.sqlite               # índice/caché, reconstruible desde los sidecars
-├── logs/                        # rotados, sin PII
-└── studies/
-    └── S-7F3K2Q/                # study_id aleatorio; sin nombres ni fechas de nacimiento
-        ├── study.json           # metadatos del estudio (anónimos)
-        ├── captures/
-        │   ├── 0001.png
-        │   ├── 0001.json        # sidecar
-        │   ├── 0002.mkv.d/      # video segmentado
-        │   │   ├── seg-0000.mkv
-        │   │   └── seg-0001.mkv
-        │   └── 0002.json
-        └── exports/
-            └── S-7F3K2Q_edu_2026-10-26.zip
+%USERPROFILE%\OpenColposcope\        # por defecto; fuera de "Documentos" (OneDrive)
+└── E-ZC858XX2\                      # id_estudio aleatorio; sin nombres ni fechas de nacimiento
+    ├── foto_20261026-150405.png
+    ├── foto_20261026-150405.json      # metadatos de la foto
+    ├── video_20261026-150412.mp4
+    └── video_20261026-150412.json     # metadatos del video
 ```
 
-Escritura **atómica**: `archivo.tmp` → `fsync` → `rename`. Un archivo sin sidecar válido
-se considera incompleto y se ofrece recuperar o descartar al iniciar.
+- Nombres con la hora local exacta al segundo; si coinciden dos capturas en el mismo
+  segundo se añade `_2`, `_3`...
+- Escritura **atómica** (temporal → `fsync` → renombrar) de PNG y JSON; el video se
+  escribe como `.video_….recording.mp4` y solo recibe su nombre final al cerrarse bien.
+- Pendiente para F3+: índice SQLite reconstruible, video segmentado, exportación.
 
-### 8.3 Sidecar de captura (ejemplo, esquema `1.0`)
+### 8.3 Metadatos por captura (esquema F2, lista cerrada)
+
+Implementado en `src/colpo/metadata.py`. Cada foto o video tiene un JSON con el mismo
+nombre y **exactamente** estos campos (el lector rechaza cualquier campo de más o de menos):
+
+| Campo | Tipo | Contenido |
+|---|---|---|
+| `id_estudio` | texto | Seudónimo aleatorio `E-XXXXXXXX` (no derivado de datos de la paciente). |
+| `timestamp` | texto | Hora local exacta al segundo, ISO 8601 con desfase UTC. En video: hora de inicio. |
+| `etapa_ifcpc` | texto | `basal`, `solucion_salina`, `acido_acetico`, `lugol` o `filtro_verde`. En video: la etapa al iniciar. |
+| `resolucion` | objeto | `{"ancho": int, "alto": int}` reales del frame. |
+| `fps` | número | Foto: FPS medidos en vivo. Video: FPS del archivo. |
+| `tipo` | texto | `foto` o `video`. |
+| `sha256` | texto | Hash del archivo de imagen/video (64 hex en minúscula). |
+| `notas` | texto o `null` | Opcionales; se rechazan si parecen contener identificadores (≤ 500 caracteres). |
 
 ```json
 {
-  "schema": "open-colposcope/capture",
-  "schema_version": "1.0",
-  "capture_id": "6f1c2a9e-0d5b-4c2f-9a77-3b1e8f0c4d21",
-  "study_id": "S-7F3K2Q",
-  "kind": "image",
-  "files": [{ "name": "0001.png", "sha256": "…", "bytes": 3145728 }],
-  "captured_at": "2026-10-26T15:04:05-05:00",
-  "acquisition": {
-    "width": 1920, "height": 1080, "pixel_format": "MJPG", "fps": 30,
-    "controls": { "white_balance_auto": false, "exposure_auto": true },
-    "privacy_masks_applied": 1
-  },
-  "device": {
-    "backend": "opencv/v4l2",
-    "vendor_id": "0x0000", "product_id": "0x0000",
-    "profile": "example_0000_0000@1"
-  },
-  "educational": {
-    "stage": "acetic_acid",
-    "stage_vocabulary": "ifcpc",
-    "tags": ["zona-de-transformacion"],
-    "free_text": null
-  },
-  "software": {
-    "name": "open-colposcope", "version": "0.1.0",
-    "intended_use": "educational-not-for-diagnosis"
-  }
+  "id_estudio": "E-ZC858XX2",
+  "timestamp": "2026-10-26T15:04:05-05:00",
+  "etapa_ifcpc": "acido_acetico",
+  "resolucion": { "ancho": 1280, "alto": 720 },
+  "fps": 30.0,
+  "tipo": "foto",
+  "sha256": "a66e6c28bb41570e6be1573f613133186f001998714282039049b9fbebfcabd3",
+  "notas": "Maniquí de práctica, ZT tipo 1"
 }
 ```
 
-El vocabulario de etapas (`stage`) sigue la terminología IFCPC (`baseline`, `saline`,
-`acetic_acid`, `lugol`, `green_filter`) y es configurable en el JSON de metadatos.
+Los códigos de etapa siguen el vocabulario IFCPC y son estables; la interfaz los muestra
+traducidos. Ampliar el esquema (p. ej. con una versión de esquema o el VID:PID del equipo)
+requiere una decisión explícita y una migración: no se añaden campos "de paso".
 
 Campos **prohibidos por diseño** (no existen en el esquema): nombre, iniciales, documento,
 fecha de nacimiento, edad exacta, historia clínica, dirección, teléfono, número de serie
