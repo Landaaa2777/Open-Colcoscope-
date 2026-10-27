@@ -4,7 +4,7 @@ Prototipo educativo. NO es un producto médico validado y no debe usarse para
 diagnóstico, tratamiento ni decisiones clínicas.
 """
 
-from colpo.capture import Frame, RecordingStats, StreamInfo, UVCCamera
+from colpo.capture import CaptureCamera, Frame, RecordingStats, StreamInfo, UVCCamera
 from colpo.devices import DeviceInfo, list_devices
 from colpo.errors import (
     BackendUnavailableError,
@@ -22,7 +22,7 @@ from colpo.errors import (
     UnsupportedFormatError,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 INTENDED_USE = "educational-not-for-diagnosis"
 DISCLAIMER = (
@@ -35,6 +35,7 @@ __all__ = [
     "INTENDED_USE",
     "BackendUnavailableError",
     "CameraNotOpenError",
+    "CaptureCamera",
     "ColpoError",
     "DeviceDisconnectedError",
     "DeviceInfo",

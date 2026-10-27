@@ -52,6 +52,9 @@ class Translator:
         self._catalog = load_catalog(language)
         self._language = language
 
+    def has(self, key: str) -> bool:
+        return key in self._catalog or key in self._fallback
+
     def tr(self, key: str, **params: object) -> str:
         text = self._catalog.get(key) or self._fallback.get(key) or key
         return text.format(**params) if params else text

@@ -1,6 +1,6 @@
 """Captura en vivo en un hilo propio, sin dependencias de Qt.
 
-:class:`LiveCapture` es el único dueño de la :class:`~colpo.capture.UVCCamera`
+:class:`LiveCapture` es el único dueño de una :class:`~colpo.capture.CaptureCamera`
 mientras está activa: abre la cámara, lee frames continuamente y ejecuta en su
 propio hilo los comandos de foto y video que le pide la UI. Así la interfaz
 nunca se bloquea esperando a la cámara y la cámara nunca se usa desde dos hilos.
@@ -21,9 +21,11 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from colpo.capture import Frame, StreamInfo, UVCCamera
+from colpo.capture import CaptureCamera
 from colpo.devices import DeviceInfo
+from colpo.drivers.registry import DriverRegistry, default_registry
 from colpo.errors import ColpoError, EndOfStreamError, FrameReadError, RecordingError
+from colpo.frame import Frame, StreamInfo
 from colpo.session import CaptureResult, CaptureSession
 
 log = logging.getLogger(__name__)
@@ -31,13 +33,27 @@ log = logging.getLogger(__name__)
 FILE_BACKEND = "file"
 
 
-def camera_for_device(device: DeviceInfo) -> UVCCamera:
-    """Construye la cámara para un dispositivo enumerado (o un video de demostración)."""
-    if device.backend == FILE_BACKEND:
-        if not device.path:
-            raise ValueError("Un dispositivo de archivo necesita 'path'.")
-        return UVCCamera(source=device.path)
-    return UVCCamera(index=device.index, backend=device.backend)
+def open_capture(
+    driver_name: str,
+    device: DeviceInfo,
+    *,
+    registry: DriverRegistry | None = None,
+    **options: object,
+) -> CaptureCamera:
+    """Crea (sin abrir) la cámara de captura para un dispositivo y su driver.
+
+    Funciona con cualquier driver registrado: el núcleo añade foto, video y
+    metadatos encima del driver.
+    """
+    driver = (registry or default_registry()).create(driver_name, device, **options)
+    return CaptureCamera(driver)
+
+
+def camera_for_device(device: DeviceInfo) -> CaptureCamera:
+    """Compatibilidad F2: cámara UVC o archivo de demostración para ``device``."""
+    if device.backend == FILE_BACKEND and not device.path:
+        raise ValueError("Un dispositivo de archivo necesita 'path'.")
+    return open_capture("uvc", device)
 
 
 # --------------------------------------------------------------------- eventos
@@ -92,22 +108,26 @@ class LiveCapture:
         on_event: recibe los eventos, desde el hilo de adquisición.
         space_check_interval: cada cuántos segundos se comprueba el espacio
             libre mientras se graba.
+        tag: identificador corto del dispositivo para los nombres de archivo
+            (p. ej. ``uvc0``), útil con varias cámaras abiertas a la vez.
     """
 
     _FPS_WINDOW = 30
 
     def __init__(
         self,
-        camera_factory: Callable[[], UVCCamera],
+        camera_factory: Callable[[], CaptureCamera],
         session: CaptureSession,
         *,
         on_event: Callable[[LiveEvent], None] | None = None,
         space_check_interval: float = 2.0,
+        tag: str | None = None,
     ) -> None:
         self._camera_factory = camera_factory
         self._session = session
         self._on_event = on_event or (lambda _event: None)
         self._space_check_interval = space_check_interval
+        self._tag = tag
         self._commands: queue.SimpleQueue[str] = queue.SimpleQueue()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -176,7 +196,7 @@ class LiveCapture:
             while not self._stop.is_set():
                 self._process_commands(camera)
                 try:
-                    frame = camera.read_frame()
+                    frame = camera.read()
                 except RecordingError as exc:
                     # El escritor de video falló: se intenta cerrar lo grabado y se sigue.
                     self._finish_video(camera, exc)
@@ -188,14 +208,14 @@ class LiveCapture:
                 if camera.is_file_source:  # demostración: reproducir a velocidad real
                     time.sleep(max(0.0, started + frame.timestamp - time.monotonic()))
                 self._publish(frame)
-                if self._session.is_recording and time.monotonic() >= next_space_check:
+                if self._session.is_recording_on(camera) and time.monotonic() >= next_space_check:
                     next_space_check = time.monotonic() + self._space_check_interval
                     try:
                         self._session.check_recording_space()
                     except ColpoError as exc:
                         self._finish_video(camera, exc)
         finally:
-            if self._session.is_recording:
+            if self._session.is_recording_on(camera):
                 self._finish_video(camera, None)
             try:
                 camera.close()
@@ -225,7 +245,7 @@ class LiveCapture:
     def _current_fps(self) -> float | None:
         return self._status.fps if self._status and self._status.fps > 0 else None
 
-    def _process_commands(self, camera: UVCCamera) -> None:
+    def _process_commands(self, camera: CaptureCamera) -> None:
         while True:
             try:
                 command = self._commands.get_nowait()
@@ -233,21 +253,24 @@ class LiveCapture:
                 return
             if command == "photo":
                 try:
-                    self._emit(Captured(self._session.take_photo(camera, fps=self._current_fps())))
+                    result = self._session.take_photo(
+                        camera, fps=self._current_fps(), tag=self._tag
+                    )
+                    self._emit(Captured(result))
                 except ColpoError as exc:
                     self._emit(Failed(exc, "photo"))
-            elif command == "video_start" and not self._session.is_recording:
+            elif command == "video_start" and not self._session.is_recording_on(camera):
                 try:
-                    self._session.start_video(camera, fps=self._current_fps())
+                    self._session.start_video(camera, fps=self._current_fps(), tag=self._tag)
                 except ColpoError as exc:
                     self._emit(Failed(exc, "video_start"))
                 else:
                     self._recording_since = time.monotonic()
                     self._emit(RecordingChanged(True))
-            elif command == "video_stop" and self._session.is_recording:
+            elif command == "video_stop" and self._session.is_recording_on(camera):
                 self._finish_video(camera, None)
 
-    def _finish_video(self, camera: UVCCamera, reason: ColpoError | None) -> None:
+    def _finish_video(self, camera: CaptureCamera, reason: ColpoError | None) -> None:
         """Cierra la grabación (si la hay) y avisa con un único error si algo falló.
 
         Si el cierre falla, se informa ese error (incluye la ruta del archivo
@@ -255,7 +278,7 @@ class LiveCapture:
         """
         self._recording_since = None
         error = reason
-        if self._session.is_recording:
+        if self._session.is_recording_on(camera):
             try:
                 self._emit(Captured(self._session.stop_video(camera)))
             except ColpoError as exc:

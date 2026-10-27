@@ -152,35 +152,37 @@ UI, integración con historias clínicas.
 
 ---
 
-## F3 — Abstracción multi-dispositivo
+## F3 — Abstracción multi-dispositivo (v0.3.0: implementada; pendiente prueba con el GC 3000E)
 
-**Objetivo:** soportar varios modelos mediante perfiles y plugins, sin modificar el núcleo.
+**Objetivo:** que cualquier colaborador añada un dispositivo sin tocar el núcleo, y que la app
+maneje varios dispositivos a la vez (colposcopio + webcam o capturadora).
 
 ### Entregables
 
-| # | Entregable |
-|---|---|
-| F3.1 | Sistema de perfiles declarativos (`profiles/<vid>_<pid>.toml`) con validación de esquema. |
-| F3.2 | Mecanismo de plugins de backend vía *entry points* (`open_colposcope.backends`). |
-| F3.3 | Suite de **pruebas de contrato** que cualquier backend debe pasar. |
-| F3.4 | Evaluación del backend `qt` (Qt Multimedia) frente a `opencv` (ADR con resultados). |
-| F3.5 | Backend `libuvc` opcional para controles UVC avanzados documentados (con advertencias de controlador). |
-| F3.6 | Soporte del botón físico UVC (*still image trigger*) donde el SO lo exponga. |
-| F3.7 | Herramienta `diagnose` que genera un reporte anonimizado listo para pegar en HARDWARE.md. |
-| F3.8 | Soporte documentado de capturadoras UVC para colposcopios con salida analógica/HDMI. |
-| F3.9 | Control de color: bloqueo de balance de blancos/exposición, registro en metadatos; guía con carta de color. |
+| # | Entregable | Estado |
+|---|---|---|
+| F3.1 | Contrato `CameraDriver` + `Capabilities` + errores de dominio (`src/colpo/drivers/`). | ✅ |
+| F3.2 | `UVCCamera` como driver puro; foto/video/metadatos en `CaptureCamera` para cualquier driver. | ✅ |
+| F3.3 | Registro por *entry points* `colpo.drivers` + registro manual; `probe_all`. | ✅ |
+| F3.4 | Perfiles JSON por VID:PID con validación; perfil del Goldcare GC 3000E. | ✅ (VID:PID pendiente) |
+| F3.5 | `MockDriver` didáctico (video sintético, ocupado, inexistente, desconexión, formato). | ✅ |
+| F3.6 | Suite de contrato parametrizable (`tests/test_driver_contract.py`), con modo hardware. | ✅ |
+| F3.7 | UI multi-dispositivo: selector agrupado por driver con VID:PID y capacidades, pestañas, cambio en caliente. | ✅ |
+| F3.8 | Marca de agua opcional en preferencias (foto y video), desactivada por defecto. | ✅ |
+| F3.9 | `docs/NON_UVC.md` (capturadora, puerto óptico, SDK publicado) y `docs/DRIVER_GUIDE.md`. | ✅ |
+| F3.10 | Backends `qt`/`libuvc`, botón físico UVC, `diagnose`, control de color. | ⏳ Pasan a F4/F5 según demanda |
 
 ### Criterios de aceptación
 
-- [ ] ≥ 3 modelos distintos (incluida ≥ 1 capturadora) funcionando con perfil propio.
-- [ ] Añadir un modelo nuevo requiere sólo un archivo de perfil + fila en HARDWARE.md
-      (demostrado por alguien que no escribió el núcleo).
-- [ ] Todos los backends incluidos pasan la suite de contrato en CI (los de hardware, con
-      dispositivo simulado o marcados como prueba manual documentada).
-- [ ] Un plugin externo de ejemplo (fuera del repositorio principal) se instala y se usa sin
-      cambios en el núcleo.
-
----
+- [x] `UVCCamera` y `MockDriver` implementan `CameraDriver` y pasan la suite de contrato.
+- [x] Añadir un driver requiere solo archivo + *entry point* + suite (verificado con un paquete
+      externo de ejemplo instalado con `pip`, sin cambios en núcleo ni UI).
+- [x] Marca de agua solo si el usuario la activa (pruebas de foto y video).
+- [x] `ruff` y `pytest` en verde.
+- [ ] La app detecta y usa a la vez el Goldcare GC 3000E y un segundo dispositivo UVC
+      (webcam del portátil). **Prueba manual pendiente.**
+- [ ] Prueba manual con el Goldcare: cambiar de dispositivo, activar marca de agua, foto y
+      video con y sin marca de agua.
 
 ## F4 — Empaquetado y distribución offline
 

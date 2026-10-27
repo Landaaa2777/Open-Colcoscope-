@@ -9,7 +9,7 @@ sus limitaciones conocidas y qué se espera del **Goldcare GC 3000E** del sitio 
 ## 1. Vía principal: UVC + OpenCV
 
 ```text
-Colposcopio (UVC) ──USB──► controlador UVC genérico del SO ──► OpenCV VideoCapture ──► UVCCamera ──► PNG / MP4
+Colposcopio (UVC) ──USB──► controlador UVC del SO ──► OpenCV VideoCapture ──► UVCCamera (driver "uvc") ──► CaptureCamera (núcleo) ──► PNG / MP4
                            (usbvideo.sys en Windows)            (DirectShow por defecto)
 ```
 
@@ -67,14 +67,18 @@ colpo preview --source demo.avi
 colpo record --source demo.avi --out demo.mp4 --duration 5
 ```
 
-## 4. Comportamiento esperado de `UVCCamera`
+## 4. Comportamiento esperado de la captura (`UVCCamera` + `CaptureCamera`)
+
+Desde F3, `UVCCamera` es un **driver puro** (abre, lee y describe la cámara) y
+`CaptureCamera` es el núcleo que añade foto, video y FPS reales sobre cualquier driver
+(ver [DRIVER_GUIDE.md](DRIVER_GUIDE.md)).
 
 | Aspecto | Comportamiento |
 |---|---|
 | Apertura | Abre por índice con el backend elegido; aplica `fourcc` → resolución → FPS (en DirectShow el orden importa); descarta 5 frames de calentamiento (exposición y balance de blancos). |
 | Resolución real | Se mide sobre el primer frame recibido, no se confía en lo que dice el driver. Si difiere de la pedida, se avisa. |
 | FPS reales | `measure_fps()` (y `colpo record`) cronometra frames reales. El FPS que informa el driver se muestra aparte, porque a menudo no coincide. |
-| `read_frame()` | Devuelve un `Frame` BGR de solo lectura, con marca de tiempo monotónica y número de secuencia. |
+| `CaptureCamera.read()` | Devuelve un `Frame` BGR de solo lectura, con marca de tiempo monotónica y número de secuencia. `read_frame()` devuelve solo la imagen (`ndarray`), como exige el contrato de driver. |
 | Foto (`snapshot`) | PNG sin pérdida, sin EXIF, escrito de forma **atómica** (temporal → `fsync` → renombrar). No sobrescribe salvo `overwrite=True`. Funciona con rutas con tildes y ñ. |
 | Video | Hilo escritor con cola acotada (~1 s). El archivo se escribe como `.<nombre>.recording.mp4` y solo se renombra al nombre final al cerrarse bien. |
 | Ritmo del video | Constante, según las marcas de tiempo reales: si la cámara entrega menos FPS de los nominales se repiten frames, y si entrega más se omiten. Así la duración del video coincide con el tiempo real. |
@@ -132,7 +136,7 @@ Errores (todos heredan de `ColpoError`):
 10. **Botón físico de la cámara y pedal:** no se soportan en F1. En F2 se dispara con teclado o
     ratón; un pedal que emule teclado funcionará sin cambios.
 11. **Vista previa en el hilo de la UI:** suficiente para depurar; en F2 la lectura pasa a un
-    hilo propio. La clase `UVCCamera` no es *thread-safe*.
+    hilo propio. `CaptureCamera` no es *thread-safe* (la UI usa un hilo por dispositivo).
 12. **Metadatos:** F1.a todavía no escribe el *sidecar* JSON (hora exacta, etapa IFCPC,
     VID:PID). Las fotos y videos de `preview` llevan la hora exacta en el nombre
     (`foto_AAAAMMDD-HHMMSS_secuencia.png`). El sidecar llega en F1.b.
@@ -165,18 +169,18 @@ fabricante cerrado y el dongle desconectado.
 ## 7. Uso desde Python
 
 ```python
-from colpo import UVCCamera, DeviceDisconnectedError
+from colpo import CaptureCamera, DeviceDisconnectedError, UVCCamera
 
 for dev in UVCCamera.list_devices():
     print(dev.index, dev.vid_pid, dev.name)
 
-with UVCCamera(index=1, fourcc="MJPG", width=1920, height=1080) as cam:
+with CaptureCamera.for_index(1, fourcc="MJPG", width=1920, height=1080) as cam:
     print(cam.stream_info, cam.measure_fps())
     cam.snapshot("capturas/foto.png")
     cam.start_recording("capturas/video.mp4")
     try:
         for _ in range(150):
-            cam.read_frame()
+            cam.read()
     except DeviceDisconnectedError:
         pass
     stats = cam.stop_recording()

@@ -1,0 +1,37 @@
+{
+  "esquema": "colpo-perfil/1",
+  "id": "goldcare-gc3000e",
+  "nombre": "GOLDCARE GC 3000E",
+  "fabricante": "GOLDCARE",
+  "modelo": "GC 3000E",
+  "vendor_id": null,
+  "product_id": null,
+  "estado": "confirmado_uvc",
+  "driver_recomendado": "uvc",
+  "api_recomendada": "auto",
+  "resoluciones_preferidas": [
+    {
+      "ancho": 1280,
+      "alto": 720,
+      "fps": 30,
+      "formato": "MJPG",
+      "verificada": false
+    }
+  ],
+  "controles": {
+    "zoom": null,
+    "brillo": null,
+    "balance_blancos": null
+  },
+  "notas": [
+    "Confirmado como UVC en Windows 10: se ve en la app Cámara sin el software del fabricante y sin el dongle conectado.",
+    "PENDIENTE: completar vendor_id y product_id con la salida de 'colpo list'. Mientras sean null, este perfil no se aplica automáticamente.",
+    "La resolución preferida es un objetivo sin verificar: no se solicita a la cámara hasta que 'verificada' sea true.",
+    "El dongle de licencia del fabricante no se usa ni se accede (política clean-room)."
+  ],
+  "verificacion": {
+    "fecha": "2026-10",
+    "sistemas": ["Windows 10"],
+    "metodo": "App Cámara de Windows, sin software del fabricante ni dongle"
+  }
+}

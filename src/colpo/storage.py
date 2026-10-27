@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -40,13 +41,17 @@ def default_data_dir() -> Path:
     return Path.home() / DATA_DIR_NAME
 
 
-def capture_path(directory: Path, tipo: str, timestamp: str, extension: str) -> Path:
-    """Ruta libre para una captura: ``<tipo>_AAAAMMDD-HHMMSS<ext>``.
+def capture_path(
+    directory: Path, tipo: str, timestamp: str, extension: str, *, tag: str | None = None
+) -> Path:
+    """Ruta libre para una captura: ``<tipo>_AAAAMMDD-HHMMSS[_<tag>]<ext>``.
 
-    Si ya existe una captura (o su JSON) en ese mismo segundo, añade ``_2``, ``_3``...
+    ``tag`` identifica el dispositivo cuando hay varios abiertos (p. ej. ``uvc0``).
+    Si ya existe una captura (o su JSON) con ese nombre, añade ``_2``, ``_3``...
     """
     stamp = datetime.fromisoformat(timestamp).strftime("%Y%m%d-%H%M%S")
-    base = f"{tipo}_{stamp}"
+    safe_tag = re.sub(r"[^a-z0-9]", "", (tag or "").lower())
+    base = f"{tipo}_{stamp}_{safe_tag}" if safe_tag else f"{tipo}_{stamp}"
     candidate = directory / f"{base}{extension}"
     counter = 2
     while candidate.exists() or candidate.with_suffix(".json").exists():

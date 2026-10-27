@@ -8,6 +8,50 @@ de versión usan un sufijo de fase (`-ui`); la versión del paquete Python es la
 
 ## [Unreleased]
 
+## [v0.3.0-drivers] - 2026-10-27
+
+Fase F3: ecosistema de drivers y multi-dispositivo.
+
+### Added
+
+- Paquete `colpo.drivers`:
+  - `base.py`: contrato `CameraDriver` (`discover`, `probe`, `for_device`, `open`, `close`,
+    `read_frame`, `capabilities`, `metadata`, `is_connected`) y `Capabilities`.
+  - `errors.py`: `CameraNotFound`, `CameraBusy`, `CameraDisconnected`, `FormatNotSupported`.
+  - `registry.py`: descubrimiento por *entry points* `colpo.drivers` (solo paquetes
+    instalados) y registro manual; `list_drivers`, `probe_all`, `create`, `describe`.
+  - `profiles/`: perfiles JSON por VID:PID con validación; perfil del Goldcare GC 3000E
+    (VID:PID pendiente, sin aplicar hasta completarlo).
+  - `uvc.py`: driver UVC (OpenCV). `mock.py`: driver simulado y ejemplo comentado.
+- `CaptureCamera` (núcleo): foto, video, FPS y marca de agua sobre **cualquier** driver.
+- UI: selector agrupado por driver con VID:PID y capacidades; una pestaña por dispositivo
+  (vista dual sin bloqueo); cambio de dispositivo en caliente; no se abre dos veces el mismo.
+- Preferencias: marca de agua "Uso educativo" para foto **y video**, desactivada por defecto
+  y guardada en la configuración del usuario.
+- `colpo drivers` (CLI) y `colpo-ui --demo` (cámaras simuladas).
+- Suite de contrato `tests/test_driver_contract.py` (con modo hardware
+  `COLPO_CONTRACT_HARDWARE=1`), `tests/test_registry.py`.
+- `docs/DRIVER_GUIDE.md`, `docs/NON_UVC.md`.
+
+### Changed
+
+- **Incompatible:** `UVCCamera` es ahora un driver puro: `read_frame()` devuelve `ndarray`;
+  la foto, el video y `measure_fps` se usan a través de `CaptureCamera`
+  (`CaptureCamera.for_index(0)`, `CaptureCamera.for_source("demo.avi")`). Exigido por el
+  contrato de driver (los drivers no escriben archivos). `colpo.UVCCamera` se sigue exportando.
+- Nombres de archivo con el dispositivo: `foto_AAAAMMDD-HHMMSS_<driver><índice>.png`.
+- `CaptureSession` admite varias cámaras grabando a la vez.
+- Generador sintético movido a `colpo.synthetic` (el script de `examples/` lo reutiliza).
+
+### Fixed
+
+- Cierre abrupto de PySide al salir de la app (la ventana se destruye antes de desmontar Qt).
+
+### Security
+
+- Sin red, sin telemetría, sin datos de paciente. Los drivers no pueden escribir archivos ni
+  importar red/UI (verificado por la suite). Política clean-room reafirmada.
+
 ## [v0.2.0-ui] - 2026-10-26
 
 Fase F2: interfaz gráfica de escritorio sobre el motor de captura de F1.

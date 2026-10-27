@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from colpo import storage
-from colpo.capture import Frame, UVCCamera, nominal_fps
+from colpo.capture import CaptureCamera
 from colpo.errors import (
     ColpoError,
     DiskFullError,
@@ -22,6 +22,7 @@ from colpo.errors import (
     RecordingError,
     SnapshotError,
 )
+from colpo.frame import Frame, is_valid_fps, nominal_fps
 from colpo.metadata import (
     DEFAULT_STAGE,
     IFCPC_STAGES,
@@ -33,8 +34,6 @@ from colpo.metadata import (
     write_sidecar,
 )
 from colpo.watermark import WATERMARK_DISABLED, WatermarkOptions, apply_watermark
-
-_MIN_FPS, _MAX_FPS = 1.0, 240.0
 
 
 @dataclass(frozen=True)
@@ -60,12 +59,16 @@ class _PendingVideo:
 
 
 class CaptureSession:
-    """Estado de captura compartido entre la UI y el hilo de adquisición.
+    """Estado de captura compartido entre la UI y los hilos de adquisición.
 
-    Las propiedades ``stage`` y ``notes`` se pueden cambiar desde el hilo de la UI
-    mientras el hilo de adquisición captura: son asignaciones atómicas de valores
+    Una sesión puede alimentarse de **varias cámaras a la vez** (p. ej. el
+    colposcopio y una capturadora externa): cada una puede tener su propia
+    grabación en curso, y ``tag`` distingue sus archivos (``foto_<hora>_uvc0.png``).
+
+    Las propiedades ``stage``, ``notes`` y ``watermark`` se pueden cambiar desde
+    el hilo de la UI mientras se captura: son asignaciones atómicas de valores
     inmutables. Los métodos que reciben ``camera`` deben llamarse desde el hilo
-    que es dueño de la cámara (ver :class:`colpo.live.LiveCapture`).
+    que es dueño de esa cámara (ver :class:`colpo.live.LiveCapture`).
     """
 
     def __init__(
@@ -83,7 +86,7 @@ class CaptureSession:
         self._study_id = new_study_id()
         self._stage = DEFAULT_STAGE
         self._notes: str | None = None
-        self._video: _PendingVideo | None = None
+        self._videos: dict[int, _PendingVideo] = {}
 
     # -------------------------------------------------------------- estado
     @property
@@ -96,8 +99,8 @@ class CaptureSession:
 
     def new_study(self) -> str:
         """Empieza un estudio nuevo con otro seudónimo aleatorio."""
-        if self._video is not None:
-            raise RecordingError("Detenga la grabación antes de empezar un estudio nuevo.")
+        if self.is_recording:
+            raise RecordingError("Detenga las grabaciones antes de empezar un estudio nuevo.")
         self._study_id = new_study_id()
         return self._study_id
 
@@ -130,19 +133,29 @@ class CaptureSession:
 
     @property
     def is_recording(self) -> bool:
-        return self._video is not None
+        """``True`` si alguna cámara está grabando para esta sesión."""
+        return bool(self._videos)
+
+    def is_recording_on(self, camera: CaptureCamera) -> bool:
+        return id(camera) in self._videos
 
     # --------------------------------------------------------------- fotos
-    def take_photo(self, camera: UVCCamera, *, fps: float | None = None) -> CaptureResult:
+    def take_photo(
+        self, camera: CaptureCamera, *, fps: float | None = None, tag: str | None = None
+    ) -> CaptureResult:
         """Guarda el último frame mostrado como PNG + JSON en la carpeta del estudio.
+
+        Si la marca de agua está activada, se aplica a la foto guardada (no al
+        frame en memoria ni a la vista previa).
 
         Raises:
             DiskFullError, SnapshotError, MetadataError, CameraNotOpenError.
         """
-        frame = camera.last_frame or camera.read_frame()
+        frame = camera.last_frame or camera.read()
         self._ensure_space(storage.MIN_FREE_PHOTO_BYTES)
         timestamp = capture_timestamp(self._now())
-        path = storage.capture_path(self.study_dir, "foto", timestamp, ".png")
+        # Cada cámara usa su ``tag``: dos cámaras en el mismo segundo no comparten nombre.
+        path = storage.capture_path(self.study_dir, "foto", timestamp, ".png", tag=tag)
 
         image = apply_watermark(frame.image, self.watermark)
         if image is not frame.image:
@@ -167,21 +180,26 @@ class CaptureSession:
         return CaptureResult(path, self._write_metadata(path, metadata), metadata)
 
     # --------------------------------------------------------------- video
-    def start_video(self, camera: UVCCamera, *, fps: float | None = None) -> Path:
-        """Empieza a grabar un MP4 en la carpeta del estudio.
+    def start_video(
+        self, camera: CaptureCamera, *, fps: float | None = None, tag: str | None = None
+    ) -> Path:
+        """Empieza a grabar un MP4 de ``camera`` en la carpeta del estudio.
 
-        La etapa y las notas que se guardan son las vigentes **al iniciar**.
-        ``fps`` (p. ej. los medidos en vivo) se redondea a la tasa estándar cercana.
+        La etapa, las notas y la marca de agua que se aplican son las vigentes
+        **al iniciar**. ``fps`` (p. ej. los medidos en vivo) se redondea a la tasa
+        estándar cercana.
         """
-        if self._video is not None:
-            raise RecordingError("Ya hay una grabación en curso.")
+        if self.is_recording_on(camera):
+            raise RecordingError("Esta cámara ya está grabando.")
         self._ensure_space(storage.MIN_FREE_VIDEO_START_BYTES)
         timestamp = capture_timestamp(self._now())
-        path = storage.capture_path(self.study_dir, "video", timestamp, ".mp4")
-        record_fps = nominal_fps(fps) if fps is not None and _MIN_FPS <= fps <= _MAX_FPS else None
-        camera.start_recording(path, fps=record_fps)
+        path = storage.capture_path(self.study_dir, "video", timestamp, ".mp4", tag=tag)
+        record_fps = nominal_fps(fps) if fps is not None and is_valid_fps(fps) else None
+        watermark = self.watermark
+        transform = (lambda image: apply_watermark(image, watermark)) if watermark.enabled else None
+        camera.start_recording(path, fps=record_fps, frame_transform=transform)
         info = camera.stream_info
-        self._video = _PendingVideo(
+        self._videos[id(camera)] = _PendingVideo(
             path=path,
             timestamp=timestamp,
             study_id=self._study_id,
@@ -192,14 +210,14 @@ class CaptureSession:
         )
         return path
 
-    def stop_video(self, camera: UVCCamera) -> CaptureResult:
-        """Cierra el video, calcula su SHA-256 y escribe el JSON.
+    def stop_video(self, camera: CaptureCamera) -> CaptureResult:
+        """Cierra el video de ``camera``, calcula su SHA-256 y escribe el JSON.
 
         Raises:
             RecordingError: no había grabación o falló el cierre (``DiskFullError``
                 si la causa fue falta de espacio).
         """
-        pending, self._video = self._video, None
+        pending = self._videos.pop(id(camera), None)
         if pending is None:
             raise RecordingError("No hay ninguna grabación en curso.")
         try:
@@ -254,8 +272,8 @@ class CaptureSession:
             raise MetadataError(f"No se pudieron escribir los metadatos: {exc}") from exc
 
     @staticmethod
-    def _photo_fps(camera: UVCCamera, fps: float | None) -> float:
+    def _photo_fps(camera: CaptureCamera, fps: float | None) -> float:
         for candidate in (fps, camera.measured_fps, camera.stream_info.fps_reported):
-            if candidate is not None and _MIN_FPS <= candidate <= _MAX_FPS:
+            if candidate is not None and is_valid_fps(candidate):
                 return candidate
         return 0.0

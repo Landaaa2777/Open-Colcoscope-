@@ -19,12 +19,22 @@
 
 ## Leyenda
 
+**Compatibilidad UVC** (columna *UVC*, igual que el campo `estado` de los perfiles JSON):
+
 | Estado | Significado |
 |---|---|
-| ✅ | Funciona: vista previa, imagen fija y video con el backend indicado. |
-| 🟡 | Parcial: funciona con limitaciones (ver notas). |
-| ❌ | No funciona / no es UVC. |
-| ❔ | Sin probar o pendiente de confirmar. |
+| `confirmado_uvc` | Verificado: aparece como cámara UVC sin software del fabricante ni dongle. |
+| `no_uvc` | Verificado que **no** es UVC. Ver vías alternativas en [NON_UVC.md](NON_UVC.md). |
+| `desconocido` | Sin verificar todavía. |
+
+**Funcionamiento con Open Colposcope** (columna *Estado*):
+
+| Estado | Significado |
+|---|---|
+| ✅ | Funciona: vista previa, foto y video con el driver indicado. |
+| 🟡 | Parcial o pendiente de prueba completa (ver notas). |
+| ❌ | No funciona con ningún driver disponible. |
+| ❔ | Sin probar. |
 
 | Clase USB (abreviaturas) | Significado |
 |---|---|
@@ -34,27 +44,37 @@
 | `HID` | Expone botones/pedal como dispositivo de entrada (`0x03`). |
 | `VENDOR` | Clase específica del fabricante (`0xFF`): **no soportado** por la vía estándar. |
 
-## Matriz
+## Matriz de colposcopios
 
-| Marca | Modelo | VID:PID | Clase USB | Resolución(es) / formato / FPS verificados | SO probados | Backend | Estado | Notas | Reportado (fecha) |
-|---|---|---|---|---|---|---|---|---|---|
-| GOLDCARE | GC 3000E | TBD — se obtendrá con `colpo list` o `Get-PnpDevice -Class Camera,Image` | `UVC` (confirmado) | TBD (medir con `colpo list --probe`) | Windows 10 | App "Cámara" de Windows; `opencv/dshow` pendiente | 🟡 | Se ve como cámara UVC en la app "Cámara" de Windows 10 **sin** el software del fabricante y **sin** el dongle conectado. Pendiente: VID:PID, formatos/FPS reales, prueba de `colpo record` (CAPTURE.md §6). Dongle presente (no usado). Sitio piloto único. | 2026-10 |
-| *Ejemplo (ficticio)* | *Modelo X-100* | `0000:0000` | `UVC-IAD` | 1920×1080 MJPG @30; 1280×720 YUY2 @10 | Win 11, Ubuntu 24.04 | `opencv/dshow`, `opencv/v4l2` | 🟡 | AWB inestable; fijar balance de blancos. OSD con fecha en esquina sup. izq. → máscara. Dongle presente (no usado). | 2026-10 |
-| | | | | | | | ❔ | | |
-| | | | | | | | ❔ | | |
+| Marca | Modelo | VID:PID | UVC | Clase USB | Resolución(es) / formato / FPS verificados | SO probados | Driver / API | Perfil | Estado | Notas | Reportado |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GOLDCARE | GC 3000E | **Pendiente** (`colpo list`) | `confirmado_uvc` | `UVC` | Pendiente (`colpo list --probe`); objetivo sin verificar 1280×720 MJPG @30 | Windows 10 | `uvc` / `auto` (DirectShow) | [`goldcare_gc3000e.json`](../src/colpo/drivers/profiles/goldcare_gc3000e.json) | 🟡 | Se ve en la app Cámara de Windows 10 **sin** software del fabricante y **sin** dongle. Pendiente: VID:PID, modos reales, prueba manual de F2/F3 (USER_GUIDE.md §10). El perfil no se aplica hasta completar el VID:PID. Dongle presente (no usado). Sitio piloto único. | 2026-10 |
+| *Plantilla* | *Modelo* | `VVVV:PPPP` | `confirmado_uvc` / `no_uvc` / `desconocido` | `UVC` / `UVC-IAD` / `VENDOR` | `1920×1080 MJPG @30; …` | `Windows 11` | `uvc` / `dshow` | `fabricante_modelo.json` | ❔ | Controles, OSD, problemas conocidos. Dongle presente (no usado). | AAAA-MM |
 
 ## Capturadoras de video (para colposcopios con salida analógica o HDMI)
 
-| Marca | Modelo | VID:PID | Entrada (HDMI / S-Video / compuesto / SDI) | Clase USB | Resolución(es) / formato / FPS verificados | SO probados | Estado | Notas | Reportado (fecha) |
-|---|---|---|---|---|---|---|---|---|---|
-| | | | | | | | ❔ | | |
+Vía 1 de [NON_UVC.md](NON_UVC.md). Una capturadora UVC funciona con el driver `uvc` sin código nuevo.
+
+| Marca | Modelo | VID:PID | Entrada (HDMI / S-Video / compuesto / SDI) | UVC | Resolución(es) / formato / FPS verificados | SO probados | Perfil | Estado | Notas | Reportado |
+|---|---|---|---|---|---|---|---|---|---|---|
+| *Plantilla* | *Modelo* | `VVVV:PPPP` | `HDMI` | `confirmado_uvc` | `1920×1080 MJPG @30` | `Windows 11` | — | ❔ | Equipo conectado, OSD visible, latencia. | AAAA-MM |
+
+## Cámaras en puerto óptico
+
+Vía 2 de [NON_UVC.md](NON_UVC.md).
+
+| Cámara | VID:PID | Adaptador / montura | UVC | Resolución(es) verificadas | Colposcopio | Estado | Notas | Reportado |
+|---|---|---|---|---|---|---|---|---|
+| *Plantilla* | `VVVV:PPPP` | `C-mount 0.5x` | `confirmado_uvc` | `1920×1080 MJPG @30` | *Modelo* | ❔ | Foco, parfocalidad. | AAAA-MM |
 
 ## Cómo obtener los datos
 
 ### VID:PID y clase USB
 
 **Forma recomendada (Windows 10/11):** con el colposcopio conectado, ejecutar
-`colpo list` (columna `VID:PID`) y `colpo list --probe` (resolución y FPS reales).
+`colpo list` (columna `VID:PID`), `colpo list --probe` (resolución y FPS reales) y
+`colpo drivers` (qué driver lo maneja y sus capacidades). En `colpo-ui`, el VID:PID y las
+capacidades aparecen junto al selector de dispositivo.
 
 Alternativa en PowerShell:
 

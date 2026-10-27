@@ -47,6 +47,12 @@ El SBOM y los avisos completos se generan en F4.
   firmware del fabricante.
 - El proyecto **no** emula, elude ni analiza el dongle de licencia. Razones y procedimiento:
   [RISKS.md §5](RISKS.md#5-por-qué-no-se-emula-el-dongle).
+- Política **clean-room** para drivers: se implementan solo con estándares públicos y
+  documentación o SDK publicados; nunca con código, firmware, *blobs* ni ingeniería inversa
+  binaria del software del fabricante. Ver [DRIVER_GUIDE.md §7](DRIVER_GUIDE.md#7-qué-no-hacer)
+  y [NON_UVC.md](NON_UVC.md).
+- Un driver cuyo SDK tenga licencia incompatible con Apache-2.0 se distribuye como paquete
+  aparte, nunca dentro de este repositorio.
 - Las marcas citadas (p. ej. GOLDCARE) pertenecen a sus titulares y se mencionan solo para
   identificar equipos compatibles (uso nominativo). El proyecto no está afiliado ni avalado
   por ningún fabricante.

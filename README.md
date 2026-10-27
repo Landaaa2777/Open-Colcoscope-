@@ -19,9 +19,11 @@ contextos con recursos limitados.
 - **F0 — Descubrimiento: cerrada.** Goldcare GC 3000E confirmado como UVC en Windows 10.
 - **F1 — Captura UVC: entregada la parte F1.a** (`UVCCamera` + CLI `colpo` + pruebas con
   video sintético).
-- **F2 — Interfaz gráfica: v0.2.0-ui** (`colpo-ui`, metadatos JSON, ES/EN). Pendiente la
-  prueba manual de 5 minutos con el GC 3000E. Ver [docs/ROADMAP.md](docs/ROADMAP.md) y
-  [CHANGELOG.md](CHANGELOG.md).
+- **F2 — Interfaz gráfica: v0.2.0-ui** (`colpo-ui`, metadatos JSON, ES/EN).
+- **F3 — Drivers y multi-dispositivo: v0.3.0** (contrato `CameraDriver`, registro por
+  *entry points*, perfiles JSON, pestañas por dispositivo, marca de agua opcional). Pendiente la
+  prueba manual con el GC 3000E y un segundo dispositivo. Ver [docs/ROADMAP.md](docs/ROADMAP.md)
+  y [CHANGELOG.md](CHANGELOG.md).
 
 ## Inicio rápido (Windows 10/11 x64)
 
@@ -36,8 +38,8 @@ Guía completa de la aplicación: [docs/USER_GUIDE.md](docs/USER_GUIDE.md). Herr
 línea de comandos (diagnóstico): `colpo list`, `colpo preview --index 0`,
 `colpo record --index 0 --out test.mp4 --duration 5`.
 
-Sin colposcopio: `python examples\synthetic_video.py demo.avi` y luego
-`colpo-ui --source demo.avi`. Detalles y limitaciones: [docs/CAPTURE.md](docs/CAPTURE.md).
+Sin colposcopio: `colpo-ui --demo` (dos cámaras simuladas) o
+`python examples\synthetic_video.py demo.avi` y luego `colpo-ui --source demo.avi`. Detalles y limitaciones: [docs/CAPTURE.md](docs/CAPTURE.md).
 
 ## Desarrollo
 
@@ -55,6 +57,8 @@ Las pruebas no necesitan hardware: usan video sintético y una cámara simulada.
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Objetivos, no-objetivos, actores, casos de uso, componentes, HAL, flujo de captura, archivos y metadatos. |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Guía de la aplicación: instalación, flujo de captura, botones, archivos, verificación sin red. |
+| [docs/DRIVER_GUIDE.md](docs/DRIVER_GUIDE.md) | Cómo escribir y registrar un driver nuevo; formato de perfiles; qué no hacer. |
+| [docs/NON_UVC.md](docs/NON_UVC.md) | Vías legítimas para equipos que no son UVC (capturadora, puerto óptico, SDK). |
 | [docs/CAPTURE.md](docs/CAPTURE.md) | Captura UVC de F1: comandos, comportamiento, limitaciones, protocolo con el GC 3000E. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Fases F0–F5 con entregables, estado y criterios de aceptación. |
 | [docs/RISKS.md](docs/RISKS.md) | Riesgos técnicos, legales, regulatorios y de privacidad. |

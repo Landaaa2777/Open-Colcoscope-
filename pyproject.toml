@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-colposcope"
-version = "0.2.0"
+version = "0.3.0"
 description = "Captura offline de imagen y video de colposcopios USB (UVC). Prototipo educativo, no es un producto médico."
 readme = "README.md"
 license = "Apache-2.0"
@@ -42,11 +42,18 @@ colpo = "colpo.cli:main"
 # python -m colpo.ui
 colpo-ui = "colpo.ui.app:main"
 
+# Drivers de cámara. Para añadir uno: crea src/colpo/drivers/<nombre>.py, añade aquí
+# una línea y reinstala (pip install -e .). Ver docs/DRIVER_GUIDE.md.
+[project.entry-points."colpo.drivers"]
+uvc = "colpo.drivers.uvc:UVCCamera"
+mock = "colpo.drivers.mock:MockDriver"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 "colpo.ui.i18n" = ["*.json"]
+"colpo.drivers.profiles" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -60,6 +67,10 @@ src = ["src", "tests", "examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Nombres del dominio fijados por el contrato de drivers (CameraNotFound, CameraBusy...).
+"src/colpo/drivers/errors.py" = ["N818"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["colpo", "conftest", "synthetic_video"]

@@ -5,8 +5,8 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | F0 cerrada · F1.a entregada · F2 (UI) entregada, pendiente de prueba con el GC 3000E |
-| Versión del documento | 0.3 |
+| Estado | F0 cerrada · F1.a · F2 (UI) · F3 (drivers y multi-dispositivo) entregadas; pendiente prueba con el GC 3000E |
+| Versión del documento | 0.4 |
 | Documentos relacionados | [ROADMAP](ROADMAP.md) · [RISKS](RISKS.md) · [HARDWARE](HARDWARE.md) · [STACK](STACK.md) · [CAPTURE](CAPTURE.md) · [PRIVACY](PRIVACY.md) · [LEGAL](LEGAL.md) |
 
 ---
@@ -233,19 +233,71 @@ flowchart TB
 | Diagnóstico de hardware | Reporta descriptores y capacidades sin números de serie. | No envía el reporte; el usuario decide compartirlo. |
 | Registro de backends | Descubre backends, asocia perfiles por VID:PID, elige el mejor backend disponible. | No contiene lógica específica de un modelo. |
 
-### 6.3.1 Implementación actual (F2)
+### 6.3.1 Implementación actual (F3): capa de drivers y perfiles
+
+```mermaid
+flowchart TB
+    subgraph UI["colpo.ui (PySide6) — no importa OpenCV ni drivers concretos"]
+        Main["MainWindow<br/>selector agrupado por driver · capacidades · preferencias"]
+        Tabs["DeviceTab × N<br/>(una pestaña por dispositivo)"]
+    end
+
+    subgraph CORE["Núcleo (sin Qt)"]
+        Live["LiveCapture × N<br/>(un hilo por dispositivo)"]
+        Session["CaptureSession<br/>estudio · etapa IFCPC · notas · marca de agua"]
+        Capture["CaptureCamera<br/>timestamps · foto PNG · video MP4 · FPS"]
+        Meta["metadata · storage"]
+    end
+
+    subgraph DRV["colpo.drivers"]
+        Registry["DriverRegistry<br/>entry points 'colpo.drivers' + registro manual"]
+        Contract{{"CameraDriver (Protocol)<br/>discover · probe · for_device · open · close<br/>read_frame · capabilities · metadata · is_connected"}}
+        UVC["uvc → UVCCamera (OpenCV)"]
+        Mock["mock → MockDriver (ejemplo)"]
+        Plugin["tu_driver → paquete instalado"]
+        Profiles[("profiles/*.json<br/>por VID:PID")]
+    end
+
+    OS["Controlador UVC del SO<br/>DirectShow / MSMF / V4L2"]
+    HW["Goldcare GC 3000E · webcam · capturadora UVC"]
+
+    Main --> Tabs --> Live --> Capture
+    Live --> Session --> Meta
+    Session --> Capture
+    Main -- "probe_all / describe" --> Registry
+    Live -- "open_capture(driver, device)" --> Registry
+    Registry --> UVC & Mock & Plugin
+    UVC & Mock & Plugin -. implementan .-> Contract
+    Capture -- "solo usa el contrato" --> Contract
+    UVC --> Profiles
+    UVC --> OS --> HW
+```
+
+Reglas de capa (verificadas por pruebas):
+
+- La UI no importa `cv2`, `numpy`, `colpo.drivers.uvc` ni `colpo.drivers.mock`.
+- Ningún driver importa PySide6 ni red, ni escribe archivos: la foto, el video y los
+  metadatos los hace `CaptureCamera`/`CaptureSession` para **cualquier** driver.
+- Añadir un driver = un archivo + una línea de *entry point* + la suite de contrato
+  ([DRIVER_GUIDE.md](DRIVER_GUIDE.md)). Cero cambios en núcleo o UI.
 
 | Módulo | Capa | Responsabilidad |
 |---|---|---|
-| `colpo/capture.py` | Núcleo | `UVCCamera` (F1): abrir, leer, foto PNG, grabación con ritmo constante; `.mp4` intenta H.264 (Media Foundation, Windows) y recurre a `mp4v`. |
-| `colpo/devices.py` | Núcleo | Enumeración (índice, nombre, VID:PID) y APIs disponibles por SO. |
-| `colpo/metadata.py` | Núcleo | Esquema cerrado de metadatos, `id_estudio`, hora exacta, SHA-256, filtro de notas. |
-| `colpo/storage.py` | Núcleo | Carpeta de datos, nombres de archivo, espacio libre, detección de disco lleno. |
-| `colpo/session.py` | Núcleo | `CaptureSession`: estudio, etapa, notas; foto/video + JSON. |
-| `colpo/live.py` | Núcleo | `LiveCapture`: hilo dueño de la cámara; eventos sin Qt. |
-| `colpo/watermark.py` | Núcleo | Gancho de marca de agua (desactivado; sin control en la UI). |
-| `colpo/ui/app.py` | UI | Ventana PySide6; consume `LiveCapture`/`CaptureSession`. **No importa OpenCV ni NumPy** (verificado por prueba). |
-| `colpo/ui/i18n/` | UI | Catálogos `es.json`/`en.json` y `Translator`. |
+| `colpo/drivers/base.py` | Drivers | Contrato `CameraDriver`, `Capabilities`, claves de `metadata()`. |
+| `colpo/drivers/errors.py` | Drivers | `CameraNotFound`, `CameraBusy`, `CameraDisconnected`, `FormatNotSupported`. |
+| `colpo/drivers/registry.py` | Drivers | Descubrimiento por *entry points*, registro manual, `probe_all`, `create`, `describe`. |
+| `colpo/drivers/profiles/` | Drivers | Perfiles JSON por VID:PID (Goldcare GC 3000E incluido). |
+| `colpo/drivers/uvc.py` | Drivers | `UVCCamera`: driver UVC con OpenCV (vía principal). |
+| `colpo/drivers/mock.py` | Drivers | `MockDriver`: driver simulado y ejemplo comentado. |
+| `colpo/capture.py` | Núcleo | `CaptureCamera`: foto/video/FPS sobre cualquier driver; `.mp4` intenta H.264 (Windows) y recurre a `mp4v`. |
+| `colpo/live.py` | Núcleo | `LiveCapture` (un hilo por dispositivo) y `open_capture()`. |
+| `colpo/session.py` | Núcleo | Estudio, etapa, notas, marca de agua; varias cámaras grabando a la vez; `tag` por dispositivo en los nombres. |
+| `colpo/metadata.py`, `storage.py`, `watermark.py`, `synthetic.py` | Núcleo | Metadatos cerrados, carpetas y espacio, marca de agua, imágenes sintéticas. |
+| `colpo/ui/app.py`, `device_tab.py`, `preferences.py`, `i18n/` | UI | Ventana con pestañas, selector agrupado, preferencias, ES/EN. |
+
+La "HAL" prevista en F0 (§6.4) quedó implementada así: `CaptureBackend`/`CaptureSession`
+→ `CameraDriver`; `DeviceProfile` → perfiles JSON; los backends `qt` y `libuvc` siguen
+siendo opcionales y no están implementados.
 
 ### 6.4 Capa de abstracción de hardware (HAL)
 
@@ -383,7 +435,8 @@ video cifrado), las vías legítimas, en orden de preferencia, son:
 4. Solicitud formal de documentación de interoperabilidad al fabricante.
 
 Cualquier ingeniería inversa de protocolos queda **fuera de alcance por defecto** y requeriría
-revisión legal documentada previa (ver RISKS.md).
+revisión legal documentada previa (ver RISKS.md). El camino detallado para un colaborador en
+cada vía está en [NON_UVC.md](NON_UVC.md).
 
 ## 7. Flujo de captura
 
@@ -498,14 +551,15 @@ cierra y el sidecar registra la interrupción.
 ```text
 %USERPROFILE%\OpenColposcope\        # por defecto; fuera de "Documentos" (OneDrive)
 └── E-ZC858XX2\                      # id_estudio aleatorio; sin nombres ni fechas de nacimiento
-    ├── foto_20261026-150405.png
-    ├── foto_20261026-150405.json      # metadatos de la foto
-    ├── video_20261026-150412.mp4
-    └── video_20261026-150412.json     # metadatos del video
+    ├── foto_20261026-150405_uvc0.png
+    ├── foto_20261026-150405_uvc0.json # metadatos de la foto
+    ├── video_20261026-150412_uvc0.mp4
+    ├── video_20261026-150412_uvc0.json
+    └── foto_20261026-150420_uvc1.png  # segundo dispositivo abierto (p. ej. capturadora)
 ```
 
-- Nombres con la hora local exacta al segundo; si coinciden dos capturas en el mismo
-  segundo se añade `_2`, `_3`...
+- Nombres con la hora local exacta al segundo y el dispositivo (`<driver><índice>`, desde F3);
+  si coinciden dos capturas en el mismo segundo se añade `_2`, `_3`...
 - Escritura **atómica** (temporal → `fsync` → renombrar) de PNG y JSON; el video se
   escribe como `.video_….recording.mp4` y solo recibe su nombre final al cerrarse bien.
 - Pendiente para F3+: índice SQLite reconstruible, video segmentado, exportación.

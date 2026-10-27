@@ -9,8 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from colpo import DeviceDisconnectedError, DeviceOpenError, DiskFullError
+from colpo import CaptureCamera, DeviceDisconnectedError, DeviceOpenError, DiskFullError
 from colpo.devices import DeviceInfo
+from colpo.drivers.errors import CameraBusy, CameraDisconnected
+from colpo.drivers.mock import MockDriver
+from colpo.drivers.uvc import UVCCamera
 from colpo.live import (
     Captured,
     Failed,
@@ -22,7 +25,6 @@ from colpo.live import (
 )
 from colpo.metadata import read_sidecar
 from colpo.session import CaptureSession
-from mock_driver import MockDriver
 
 PLENTY = 10 * 1024**3
 
@@ -49,9 +51,11 @@ class Recorder:
         raise AssertionError(f"Tiempo agotado. Eventos: {self.events}")
 
 
-def _live(driver: MockDriver, session: CaptureSession, recorder: Recorder) -> LiveCapture:
-    device = driver.list_devices()[0]
-    return LiveCapture(lambda: driver.camera_factory(device), session, on_event=recorder)
+def _live(session: CaptureSession, recorder: Recorder, **mock_options) -> LiveCapture:
+    def factory() -> CaptureCamera:
+        return CaptureCamera(MockDriver(resolution=(320, 240), **mock_options))
+
+    return LiveCapture(factory, session, on_event=recorder, tag="mock0")
 
 
 def _session(tmp_path: Path, free: int = PLENTY) -> CaptureSession:
@@ -61,7 +65,7 @@ def _session(tmp_path: Path, free: int = PLENTY) -> CaptureSession:
 def test_photo_and_video_from_live_thread(tmp_path: Path) -> None:
     rec = Recorder()
     session = _session(tmp_path)
-    live = _live(MockDriver(), session, rec)
+    live = _live(session, rec)
     live.start()
     try:
         rec.wait_for(lambda: live.status() is not None and live.status().sequence >= 5)
@@ -80,6 +84,7 @@ def test_photo_and_video_from_live_thread(tmp_path: Path) -> None:
         live.stop()
     photo, video = (e.result for e in rec.of(Captured))
     assert photo.metadata.tipo == "foto" and video.metadata.tipo == "video"
+    assert photo.media_path.stem.endswith("_mock0")
     assert read_sidecar(video.metadata_path).sha256 == video.metadata.sha256
     assert isinstance(rec.events[-1], Stopped)
     assert not rec.of(Failed)
@@ -87,7 +92,7 @@ def test_photo_and_video_from_live_thread(tmp_path: Path) -> None:
 
 def test_stopping_while_recording_saves_the_video(tmp_path: Path) -> None:
     rec = Recorder()
-    live = _live(MockDriver(), _session(tmp_path), rec)
+    live = _live(_session(tmp_path), rec)
     live.start()
     rec.wait_for(lambda: rec.of(Opened))
     live.request_start_video()
@@ -100,23 +105,25 @@ def test_stopping_while_recording_saves_the_video(tmp_path: Path) -> None:
 
 def test_busy_camera_reports_open_error(tmp_path: Path) -> None:
     rec = Recorder()
-    live = _live(MockDriver(busy=True), _session(tmp_path), rec)
+    live = _live(_session(tmp_path), rec, busy=True)
     live.start()
     rec.wait_for(lambda: rec.of(Stopped))
     (failure,) = rec.of(Failed)
-    assert isinstance(failure.error, DeviceOpenError) and failure.action == "open"
+    assert isinstance(failure.error, CameraBusy) and failure.action == "open"
+    assert isinstance(failure.error, DeviceOpenError)
     assert not live.is_running
 
 
 def test_disconnection_during_recording_keeps_file(tmp_path: Path) -> None:
     rec = Recorder()
-    live = _live(MockDriver(fail_after=25), _session(tmp_path), rec)
+    live = _live(_session(tmp_path), rec, disconnect_after=25)
     live.start()
     rec.wait_for(lambda: rec.of(Opened))
     live.request_start_video()
     rec.wait_for(lambda: rec.of(Stopped))
     errors = [f.error for f in rec.of(Failed)]
-    assert any(isinstance(e, DeviceDisconnectedError) for e in errors)
+    assert any(isinstance(e, CameraDisconnected) for e in errors)
+    assert all(isinstance(e, DeviceDisconnectedError) for e in errors)
     (video,) = (e.result for e in rec.of(Captured))
     assert video.media_path.exists() and video.metadata_path.exists()
 
@@ -125,9 +132,8 @@ def test_low_disk_space_stops_recording_and_saves(tmp_path: Path) -> None:
     rec = Recorder()
     free = {"bytes": PLENTY}
     session = CaptureSession(tmp_path, free_bytes=lambda _p: free["bytes"])
-    device = MockDriver().list_devices()[0]
     live = LiveCapture(
-        lambda: MockDriver().camera_factory(device),
+        lambda: CaptureCamera(MockDriver(resolution=(320, 240))),
         session,
         on_event=rec,
         space_check_interval=0.05,
@@ -149,8 +155,9 @@ def test_low_disk_space_stops_recording_and_saves(tmp_path: Path) -> None:
 
 
 def test_camera_for_device() -> None:
-    assert camera_for_device(DeviceInfo(index=2, name="x", backend="auto")).is_file_source is False
+    camera = camera_for_device(DeviceInfo(index=2, name="x", backend="auto"))
+    assert isinstance(camera.driver, UVCCamera) and not camera.driver.is_file_source
     demo = camera_for_device(DeviceInfo(index=0, name="d", backend="file", path="demo.avi"))
-    assert demo.is_file_source
+    assert isinstance(demo.driver, UVCCamera) and demo.driver.is_file_source
     with pytest.raises(ValueError):
         camera_for_device(DeviceInfo(index=0, name="d", backend="file"))

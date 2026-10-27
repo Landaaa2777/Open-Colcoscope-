@@ -10,7 +10,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 qt_widgets = pytest.importorskip("PySide6.QtWidgets", reason="PySide6 no disponible")
 
-from colpo import UVCCamera  # noqa: E402
+from colpo import CaptureCamera  # noqa: E402
 from colpo.preview import PreviewResult, PreviewWindow, frame_to_qimage, run_preview  # noqa: E402
 
 
@@ -20,8 +20,8 @@ def qapp():
 
 
 def test_frame_to_qimage_keeps_size_and_colors(synthetic_video: Path, qapp) -> None:
-    with UVCCamera(source=synthetic_video) as cam:
-        frame = cam.read_frame()
+    with CaptureCamera.for_source(synthetic_video) as cam:
+        frame = cam.read()
     qimage = frame_to_qimage(frame)
     assert (qimage.width(), qimage.height()) == (frame.width, frame.height)
     blue, green, red = (int(c) for c in frame.image[100, 5])
@@ -30,7 +30,7 @@ def test_frame_to_qimage_keeps_size_and_colors(synthetic_video: Path, qapp) -> N
 
 
 def test_run_preview_shows_frames(synthetic_video: Path, tmp_path: Path, qapp) -> None:
-    with UVCCamera(source=synthetic_video) as cam:
+    with CaptureCamera.for_source(synthetic_video) as cam:
         result = run_preview(cam, out_dir=tmp_path, max_frames=5)
     assert result.frames_shown == 5
     assert result.error is None
@@ -38,7 +38,7 @@ def test_run_preview_shows_frames(synthetic_video: Path, tmp_path: Path, qapp) -
 
 def test_preview_snapshot_and_recording_keys(synthetic_video: Path, tmp_path: Path, qapp) -> None:
     result = PreviewResult()
-    with UVCCamera(source=synthetic_video) as cam:
+    with CaptureCamera.for_source(synthetic_video) as cam:
         window = PreviewWindow(cam, tmp_path, result)
         window._timer.stop()  # se avanza a mano para que la prueba sea determinista
         window._tick()

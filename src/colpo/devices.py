@@ -88,6 +88,9 @@ class DeviceInfo:
     vendor_id: int | None = None
     product_id: int | None = None
     path: str | None = None
+    # Nombre del driver que lo descubrió (``"uvc"``, ``"mock"``...). ``None`` en
+    # enumeraciones directas del SO (F1/F2), que el driver UVC acepta.
+    driver: str | None = None
 
     @property
     def vid_pid(self) -> str:

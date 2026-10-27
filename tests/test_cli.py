@@ -119,3 +119,11 @@ def test_version(capsys) -> None:
         cli.main(["--version"])
     assert excinfo.value.code == 0
     assert "colpo" in capsys.readouterr().out
+
+
+def test_drivers_command(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setenv("COLPO_MOCK_DEVICES", "1")
+    assert cli.main(["drivers"]) == 0
+    out = capsys.readouterr().out
+    assert "uvc" in out and "mock" in out
+    assert "[mock] 0 — Cámara simulada 1" in out

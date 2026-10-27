@@ -32,7 +32,8 @@ La vía de captura principal es UVC + OpenCV (ARCHITECTURE.md §6.0).
 | Video (grabación) | OpenCV `VideoWriter`: `.mp4` → en Windows, H.264 vía el codificador de Media Foundation incluido en el SO; si no está disponible, MPEG-4 Part 2 (`mp4v`). `.avi`/`.mkv` → MJPEG. Evaluar **PyAV** (FFmpeg) para *passthrough* MJPEG sin recodificar | `.mp4` es el formato pedido para F1 y se reproduce en cualquier equipo; MJPEG da más calidad con menos CPU. H.264 no viene en las ruedas de OpenCV. |
 | Metadatos | JSON *sidecar* + **JSON Schema** (validación con `jsonschema` o `pydantic`) | Legible por humanos, versionable, fácil de auditar. |
 | Índice | **SQLite** (stdlib `sqlite3`) | Sin servidor; reconstruible desde los sidecars. |
-| Configuración | **TOML** (`tomllib` stdlib para lectura) | Legible; estándar en Python. |
+| Configuración | Preferencias de usuario en `QSettings` (registro de Windows); perfiles de dispositivo en **JSON** dentro del paquete | JSON: sin dependencias nuevas (no hace falta PyYAML), validable, legible. |
+| Drivers | Contrato `typing.Protocol` + **entry points** `colpo.drivers` (`importlib.metadata`) | Mecanismo estándar de Python para plugins: sin importar rutas arbitrarias ni descargar nada. |
 | Pruebas | `pytest`, `pytest-qt`, backend `replay`, `hypothesis` (opcional) | Probar sin hardware. |
 | Calidad | `ruff`, `mypy`, `pre-commit` | Estándar actual, rápido. |
 | Empaquetado | **PyInstaller para Windows 10/11 x64** (prioritario); AppImage/macOS solo si hay demanda | Ver tabla §3.7. |

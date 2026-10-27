@@ -17,7 +17,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QImage, QKeyEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
 
-from colpo.capture import Frame, RecordingStats, UVCCamera
+from colpo.capture import CaptureCamera, Frame, RecordingStats
 from colpo.errors import ColpoError, EndOfStreamError
 
 WINDOW_TITLE = "Open Colposcope - vista previa (uso educativo, no diagnóstico)"
@@ -50,7 +50,7 @@ def _timestamped_name(prefix: str, sequence: int, suffix: str) -> str:
 class PreviewWindow(QMainWindow):
     def __init__(
         self,
-        camera: UVCCamera,
+        camera: CaptureCamera,
         out_dir: Path,
         result: PreviewResult,
         max_frames: int | None = None,
@@ -78,7 +78,7 @@ class PreviewWindow(QMainWindow):
 
     def _tick(self) -> None:
         try:
-            frame = self._camera.read_frame()
+            frame = self._camera.read()
         except EndOfStreamError:
             self._result.end_of_stream = True
             self._timer.stop()
@@ -168,7 +168,7 @@ class PreviewWindow(QMainWindow):
 
 
 def run_preview(
-    camera: UVCCamera, *, out_dir: Path, max_frames: int | None = None
+    camera: CaptureCamera, *, out_dir: Path, max_frames: int | None = None
 ) -> PreviewResult:
     """Muestra la vista previa de una cámara ya abierta hasta que se cierre la ventana.
 

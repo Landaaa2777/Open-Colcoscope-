@@ -5,6 +5,7 @@ Comandos:
     colpo preview (--index N | --source VIDEO) [--out-dir DIR]
     colpo record  (--index N | --source VIDEO) --out ARCHIVO.mp4 --duration S
     colpo snapshot (--index N | --source VIDEO) --out ARCHIVO.png
+    colpo drivers [--backend B]
 
 Códigos de salida: 0 correcto, 1 error de captura, 2 uso incorrecto,
 130 interrumpido por el usuario.
@@ -22,8 +23,9 @@ from pathlib import Path
 import cv2
 
 from colpo import DISCLAIMER, __version__
-from colpo.capture import UVCCamera
+from colpo.capture import CaptureCamera
 from colpo.devices import DeviceInfo, available_backends, list_devices
+from colpo.drivers.registry import default_registry
 from colpo.errors import ColpoError, DeviceDisconnectedError, EndOfStreamError
 
 EXIT_OK, EXIT_ERROR, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 130
@@ -92,13 +94,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_snap.add_argument("--out", type=Path, required=True, help="archivo .png")
     p_snap.add_argument("--overwrite", action="store_true", help="sobrescribir si existe")
     p_snap.set_defaults(handler=cmd_snapshot)
+
+    p_drivers = sub.add_parser(
+        "drivers", help="lista los drivers registrados y los dispositivos que detectan"
+    )
+    p_drivers.add_argument("--backend", default="auto", choices=("auto", *available_backends()))
+    p_drivers.set_defaults(handler=cmd_drivers)
     return parser
 
 
-def _camera_from_args(args: argparse.Namespace) -> UVCCamera:
-    return UVCCamera(
-        index=args.index,
-        source=args.source,
+def _camera_from_args(args: argparse.Namespace) -> CaptureCamera:
+    if args.source is not None:
+        return CaptureCamera.for_source(args.source)
+    return CaptureCamera.for_index(
+        args.index,
         backend=args.backend,
         width=args.width,
         height=args.height,
@@ -107,7 +116,7 @@ def _camera_from_args(args: argparse.Namespace) -> UVCCamera:
     )
 
 
-def _print_stream(cam: UVCCamera) -> None:
+def _print_stream(cam: CaptureCamera) -> None:
     info = cam.stream_info
     reported = f"{info.fps_reported:.1f}" if info.fps_reported > 0 else "?"
     print(
@@ -165,7 +174,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def _probe(dev: DeviceInfo) -> str:
     try:
-        with UVCCamera(index=dev.index, backend=dev.backend, warmup_frames=3) as cam:
+        with CaptureCamera.for_index(dev.index, backend=dev.backend, warmup_frames=3) as cam:
             info = cam.stream_info
             measured = cam.measure_fps(20)
             reported = f"{info.fps_reported:.1f}" if info.fps_reported > 0 else "?"
@@ -213,7 +222,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         last_second = -1
         try:
             while True:
-                frame = cam.read_frame()
+                frame = cam.read()
                 if first is None:
                     first = frame.timestamp
                 elapsed = frame.timestamp - first
@@ -246,6 +255,26 @@ def cmd_record(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     return exit_code
+
+
+def cmd_drivers(args: argparse.Namespace) -> int:
+    registry = default_registry()
+    drivers = registry.list_drivers()
+    print("Drivers registrados:")
+    for name, cls in sorted(drivers.items()):
+        print(f"  {name:<10}{getattr(cls, 'display_name', cls.__name__)}  ({cls.__module__})")
+    for name, error in sorted(registry.load_errors.items()):
+        print(f"  {name:<10}ERROR al cargar: {error}", file=sys.stderr)
+    found = registry.probe_all(backend=args.backend)
+    print("Dispositivos detectados:" if found else "No se detectaron dispositivos.")
+    for cls, device in found:
+        caps = registry.describe(cls.name, device)
+        modes = ", ".join(f"{w}x{h}" for w, h in caps.resoluciones_soportadas) or "?"
+        print(
+            f"  [{cls.name}] {device.index} — {device.name}  VID:PID {device.vid_pid}  "
+            f"UVC: {'sí' if caps.es_uvc else 'no'}  resoluciones: {modes}"
+        )
+    return EXIT_OK
 
 
 def cmd_snapshot(args: argparse.Namespace) -> int:

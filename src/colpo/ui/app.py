@@ -1,8 +1,10 @@
-"""Aplicación de escritorio Open Colposcope (F2).
+"""Aplicación de escritorio Open Colposcope (F3: multi-dispositivo).
 
-Esta capa solo presenta y recoge acciones: la captura, el guardado y los
-metadatos viven en el núcleo (:mod:`colpo.live`, :mod:`colpo.session`). La UI
-no importa OpenCV.
+Esta capa solo presenta y recoge acciones. Los dispositivos llegan del
+**registro de drivers** (:mod:`colpo.drivers.registry`) y se abren con
+:func:`colpo.live.open_capture`; la UI nunca importa OpenCV ni drivers
+concretos (una prueba lo verifica). La captura, el guardado y los metadatos
+viven en el núcleo (:mod:`colpo.live`, :mod:`colpo.session`).
 
 Ejecutar: ``colpo-ui`` o ``python -m colpo.ui.app``.
 """
@@ -10,13 +12,12 @@ Ejecutar: ``colpo-ui`` o ``python -m colpo.ui.app``.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
-from collections.abc import Callable
-from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -28,14 +29,19 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from colpo import __version__, storage
-from colpo.capture import Frame, UVCCamera
-from colpo.devices import DeviceInfo, available_backends, list_devices
+from colpo.capture import CaptureCamera
+from colpo.devices import DeviceInfo, available_backends
+from colpo.drivers.base import Capabilities
+from colpo.drivers.errors import CameraNotFound, FormatNotSupported
+from colpo.drivers.registry import DriverRegistry, default_registry
 from colpo.errors import (
     BackendUnavailableError,
     ColpoError,
@@ -47,22 +53,16 @@ from colpo.errors import (
     RecordingError,
     SnapshotError,
 )
-from colpo.live import (
-    FILE_BACKEND,
-    Captured,
-    Failed,
-    LiveCapture,
-    LiveEvent,
-    Opened,
-    RecordingChanged,
-    Stopped,
-    camera_for_device,
-)
+from colpo.live import FILE_BACKEND, Captured, Failed, LiveEvent, open_capture
 from colpo.metadata import IFCPC_STAGES
 from colpo.session import CaptureSession
+from colpo.ui.device_tab import DeviceChoice, DeviceTab
 from colpo.ui.i18n import DEFAULT_LANGUAGE, LANGUAGES, Translator
+from colpo.ui.preferences import PreferencesDialog
+from colpo.watermark import WatermarkOptions
 
 PREVIEW_INTERVAL_MS = 15  # sondeo del último frame (> 60 Hz: no se pierde ninguno a 30 FPS)
+DEMO_ENV = "COLPO_MOCK_DEVICES"  # lo lee el driver simulado (sin importarlo desde la UI)
 
 _BANNER_STYLE = (
     "#disclaimerBanner { background: #FFF3CD; color: #5C4400; border: 1px solid #E0A800;"
@@ -70,17 +70,20 @@ _BANNER_STYLE = (
 )
 _ERROR_STYLE = "#errorPanel { background: #FDECEA; border: 1px solid #E57373; }"
 _ERROR_TEXT_STYLE = "color: #611A15;"
-_PREVIEW_STYLE = "background: #111; color: #BBB;"
-_RECORDING_STYLE = "color: #C62828; font-weight: bold;"
 _NOTES_WARNING_STYLE = "color: #B71C1C;"
+_CAPS_STYLE = "color: #444;"
 
 
 def error_message_key(error: ColpoError, action: str) -> str:
-    """Clave de traducción del mensaje principal para un error del núcleo."""
+    """Clave de traducción del mensaje principal para un error del núcleo o de un driver."""
     if isinstance(error, DiskFullError) or storage.is_disk_full_error(error):
         return "error.disk_full"
     if isinstance(error, DeviceDisconnectedError):
         return "error.camera_disconnected"
+    if isinstance(error, FormatNotSupported):
+        return "error.format"
+    if isinstance(error, CameraNotFound):
+        return "error.camera_not_found"
     if isinstance(error, DeviceOpenError) or action == "open":
         return "error.camera_busy"
     if isinstance(error, BackendUnavailableError):
@@ -94,34 +97,36 @@ def error_message_key(error: ColpoError, action: str) -> str:
     return "error.generic"
 
 
-def frame_to_pixmap(frame: Frame) -> QPixmap:
-    """Convierte un frame BGR del núcleo en ``QPixmap`` (sin OpenCV)."""
-    image = frame.image
-    height, width = image.shape[:2]
-    data = image.tobytes()  # se mantiene vivo hasta que QPixmap copia los datos
-    qimage = QImage(data, width, height, image.strides[0], QImage.Format.Format_BGR888)
-    return QPixmap.fromImage(qimage)
+def capabilities_summary(caps: Capabilities, translator: Translator) -> str:
+    """Resumen de una línea de las capacidades de un dispositivo."""
+    t = translator.tr
 
+    def flag(value: bool | None) -> str:
+        return t("caps.unknown") if value is None else t("caps.yes" if value else "caps.no")
 
-def _format_elapsed(seconds: float) -> str:
-    minutes, secs = divmod(int(seconds), 60)
-    return f"{minutes:02d}:{secs:02d}"
-
-
-class _EventBridge(QObject):
-    """Lleva eventos del hilo de adquisición al hilo de la UI (conexión en cola)."""
-
-    event = Signal(int, object)
+    modes = []
+    for w, h in caps.resoluciones_soportadas:
+        fps = caps.fps_por_resolucion.get((w, h))
+        rates = f" @{'/'.join(f'{f:g}' for f in fps)}" if fps else ""
+        modes.append(f"{w}\u00d7{h}{rates}")
+    return t(
+        "caps.summary",
+        uvc=t("caps.uvc_yes" if caps.es_uvc else "caps.uvc_no"),
+        resolutions=", ".join(modes) or t("caps.unknown_modes"),
+        formats=", ".join(caps.formatos_pixel) or t("caps.unknown"),
+        zoom=flag(caps.tiene_control_zoom),
+        brightness=flag(caps.tiene_control_brillo),
+        wb=flag(caps.tiene_control_balance_blancos),
+    )
 
 
 class MainWindow(QMainWindow):
-    """Ventana principal.
+    """Ventana principal con pestañas, una por dispositivo abierto.
 
     Args:
         data_dir: carpeta de datos (por defecto ``~/OpenColposcope``).
-        list_devices_fn: enumeración de cámaras del núcleo (inyectable en pruebas).
-        camera_factory: crea la ``UVCCamera`` de un dispositivo (inyectable en pruebas).
-        settings: preferencias de la UI (idioma, API, última cámara).
+        registry: registro de drivers (por defecto, el de los *entry points*).
+        settings: preferencias del usuario (idioma, API, última cámara, marca de agua).
         language: idioma inicial; si no, el guardado; si no, español.
         demo_source: video que se ofrece como "cámara" de demostración.
         session: sesión de captura (por defecto, una nueva en ``data_dir``).
@@ -131,8 +136,7 @@ class MainWindow(QMainWindow):
         self,
         *,
         data_dir: Path | None = None,
-        list_devices_fn: Callable[[str], list[DeviceInfo]] = list_devices,
-        camera_factory: Callable[[DeviceInfo], UVCCamera] = camera_for_device,
+        registry: DriverRegistry | None = None,
         settings: QSettings | None = None,
         language: str | None = None,
         demo_source: Path | None = None,
@@ -142,32 +146,22 @@ class MainWindow(QMainWindow):
         self._settings = settings or QSettings("OpenColposcope", "OpenColposcope")
         initial = language or str(self._settings.value("language", DEFAULT_LANGUAGE))
         self.translator = Translator(initial if initial in LANGUAGES else DEFAULT_LANGUAGE)
-        self._list_devices = list_devices_fn
-        self._camera_factory = camera_factory
+        self.registry = registry or default_registry()
         self._demo_source = demo_source
         self.session = session or CaptureSession(data_dir or storage.default_data_dir())
 
-        self._devices: list[DeviceInfo] = []
-        self._live: LiveCapture | None = None
-        self._generation = 0
-        self._state = "disconnected"  # disconnected | connecting | streaming
-        self._recording = False
-        self._connected_name = ""
-        self._last_sequence = -1
+        self.choices: list[DeviceChoice] = []
         self._error: tuple[str, str] | None = None
         self._last_capture: tuple[str, dict[str, object]] | None = None
         self._notes_reasons: tuple[str, ...] = ()
 
-        self._bridge = _EventBridge()
-        self._bridge.event.connect(self._on_live_event)
-
         self._build_ui()
+        self._apply_watermark_setting(self.watermark_enabled)
         self.refresh_devices()
         self._retranslate()
-        self._update_controls()
 
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._refresh_preview)
+        self._timer.timeout.connect(self._refresh_tabs)
         self._timer.start(PREVIEW_INTERVAL_MS)
 
     # ------------------------------------------------------------- interfaz
@@ -187,7 +181,7 @@ class MainWindow(QMainWindow):
         self.error_label = QLabel(wordWrap=True)
         self.error_label.setStyleSheet(_ERROR_TEXT_STYLE)
         self.error_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.error_close_button = QToolButton(text="\u2715")  # ✕
+        self.error_close_button = QToolButton(text="✕")  # ✕
         self.error_close_button.clicked.connect(self.dismiss_error)
         error_layout.addWidget(self.error_label, 1)
         error_layout.addWidget(self.error_close_button, 0, Qt.AlignmentFlag.AlignTop)
@@ -195,9 +189,9 @@ class MainWindow(QMainWindow):
         root.addWidget(self.error_panel)
 
         top = QHBoxLayout()
-        self.camera_label = QLabel()
-        self.camera_combo = QComboBox()
-        self.camera_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.device_label = QLabel()
+        self.device_combo = QComboBox()
+        self.device_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.api_label = QLabel()
         self.backend_combo = QComboBox()
         for backend in ("auto", *available_backends()):
@@ -205,43 +199,45 @@ class MainWindow(QMainWindow):
         saved_backend = self.backend_combo.findData(str(self._settings.value("backend", "auto")))
         self.backend_combo.setCurrentIndex(max(0, saved_backend))
         self.refresh_button = QPushButton()
-        self.connect_button = QPushButton()
+        self.open_button = QPushButton()
+        self.open_new_tab_button = QPushButton()
         self.language_label = QLabel()
         self.language_combo = QComboBox()
         for code, name in LANGUAGES.items():
             self.language_combo.addItem(name, code)
         self.language_combo.setCurrentIndex(self.language_combo.findData(self.translator.language))
+        self.preferences_button = QPushButton()
         for widget in (
-            self.camera_label,
-            self.camera_combo,
+            self.device_label,
+            self.device_combo,
             self.api_label,
             self.backend_combo,
             self.refresh_button,
-            self.connect_button,
+            self.open_button,
+            self.open_new_tab_button,
         ):
             top.addWidget(widget)
-        top.addSpacing(24)
+        top.addSpacing(16)
         top.addWidget(self.language_label)
         top.addWidget(self.language_combo)
+        top.addWidget(self.preferences_button)
         root.addLayout(top)
 
+        self.capabilities_label = QLabel(wordWrap=True)
+        self.capabilities_label.setStyleSheet(_CAPS_STYLE)
+        root.addWidget(self.capabilities_label)
+
         body = QHBoxLayout()
-        left = QVBoxLayout()
-        self.preview_label = QLabel()
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumSize(640, 360)
-        self.preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.preview_label.setStyleSheet(_PREVIEW_STYLE)
-        left.addWidget(self.preview_label, 1)
-        info_row = QHBoxLayout()
-        self.stream_label = QLabel()
-        self.recording_label = QLabel()
-        self.recording_label.setStyleSheet(_RECORDING_STYLE)
-        info_row.addWidget(self.stream_label)
-        info_row.addStretch(1)
-        info_row.addWidget(self.recording_label)
-        left.addLayout(info_row)
-        body.addLayout(left, 1)
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.setMovable(True)
+        self.placeholder_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter, wordWrap=True)
+        self.placeholder_label.setStyleSheet("background: #111; color: #BBB;")
+        self.placeholder_label.setMinimumSize(480, 270)
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self.placeholder_label)
+        self.view_stack.addWidget(self.tab_widget)
+        body.addWidget(self.view_stack, 1)
 
         panel = QWidget()
         panel.setFixedWidth(320)
@@ -274,6 +270,8 @@ class MainWindow(QMainWindow):
         side.addWidget(self.notes_edit)
         side.addWidget(self.notes_warning)
 
+        self.active_device_label = QLabel(wordWrap=True)
+        side.addWidget(self.active_device_label)
         self.photo_button = QPushButton()
         self.record_button = QPushButton()
         for button in (self.photo_button, self.record_button):
@@ -292,10 +290,18 @@ class MainWindow(QMainWindow):
         root.addLayout(body, 1)
         self.setCentralWidget(central)
 
+        self.watermark_status = QLabel()
+        self.statusBar().addPermanentWidget(self.watermark_status)
+
         self.refresh_button.clicked.connect(self.refresh_devices)
         self.backend_combo.currentIndexChanged.connect(self._on_backend_changed)
-        self.connect_button.clicked.connect(self.toggle_connection)
+        self.device_combo.currentIndexChanged.connect(self._render_capabilities)
+        self.open_button.clicked.connect(lambda: self.open_selected(new_tab=False))
+        self.open_new_tab_button.clicked.connect(lambda: self.open_selected(new_tab=True))
+        self.tab_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_widget.currentChanged.connect(lambda _i: self._update_controls())
         self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        self.preferences_button.clicked.connect(self.show_preferences)
         self.new_study_button.clicked.connect(self.new_study)
         self.stage_combo.currentIndexChanged.connect(self._on_stage_changed)
         self.notes_edit.textChanged.connect(self._on_notes_changed)
@@ -303,7 +309,7 @@ class MainWindow(QMainWindow):
         self.record_button.clicked.connect(self.toggle_recording)
         self.open_folder_button.clicked.connect(self._open_study_folder)
         # Atajos globales: funcionan aunque el foco esté en las notas (y con pedales
-        # USB que emulan teclas).
+        # USB que emulan teclas). Actúan sobre la pestaña activa.
         for key, slot in (("F8", self.take_photo), ("F9", self.toggle_recording)):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -313,11 +319,16 @@ class MainWindow(QMainWindow):
         t = self.translator.tr
         self.setWindowTitle(t("app.title"))
         self.banner_label.setText(t("banner.disclaimer"))
-        self.camera_label.setText(t("camera.label"))
-        self.api_label.setText(t("camera.api"))
-        self.refresh_button.setText(t("camera.refresh"))
-        self.refresh_button.setToolTip(t("camera.refresh_tip"))
+        self.device_label.setText(t("device.label"))
+        self.api_label.setText(t("device.api"))
+        self.refresh_button.setText(t("device.refresh"))
+        self.refresh_button.setToolTip(t("device.refresh_tip"))
+        self.open_button.setText(t("device.open"))
+        self.open_button.setToolTip(t("device.open_tip"))
+        self.open_new_tab_button.setText(t("device.open_new_tab"))
         self.language_label.setText(t("language.label"))
+        self.preferences_button.setText(t("prefs.button"))
+        self.placeholder_label.setText(t("tabs.placeholder"))
         self.study_group.setTitle(t("study.group"))
         self.new_study_button.setText(t("study.new"))
         self.stage_label.setText(t("stage.label"))
@@ -329,7 +340,13 @@ class MainWindow(QMainWindow):
         self.last_capture_title.setText(t("capture.last"))
         self.open_folder_button.setText(t("capture.open_folder"))
         self.error_close_button.setToolTip(t("error.close"))
-        self._fill_camera_combo()
+        self.watermark_status.setText(t("watermark.status"))
+        self.session.watermark = WatermarkOptions(
+            enabled=self.session.watermark.enabled, text=t("watermark.text")
+        )
+        self._fill_device_combo()
+        for tab in self.tabs():
+            tab.retranslate()
         self._render_study()
         self._render_notes_warning()
         self._render_error()
@@ -338,202 +355,207 @@ class MainWindow(QMainWindow):
 
     def _update_controls(self) -> None:
         t = self.translator.tr
-        streaming = self._state == "streaming"
-        idle = self._state == "disconnected"
-        has_device = self._selected_device() is not None
-        for widget in (self.camera_combo, self.backend_combo, self.refresh_button):
-            widget.setEnabled(idle)
-        if self._state == "connecting":
-            self.connect_button.setText(t("camera.connecting"))
-        else:
-            self.connect_button.setText(t("camera.connect" if idle else "camera.disconnect"))
-        self.connect_button.setEnabled(self._state != "connecting" and (has_device or not idle))
+        tab = self.current_tab()
+        streaming = tab is not None and tab.streaming
+        recording = tab is not None and tab.recording
+        has_device = self._selected_choice() is not None
+        self.open_button.setEnabled(has_device)
+        self.open_new_tab_button.setEnabled(has_device)
         self.photo_button.setEnabled(streaming)
         self.record_button.setEnabled(streaming)
         self.record_button.setText(
-            t("capture.record_stop" if self._recording else "capture.record_start")
+            t("capture.record_stop" if recording else "capture.record_start")
         )
-        self.new_study_button.setEnabled(not self._recording)
-        self.recording_label.setVisible(self._recording)
-        if not streaming:
-            self.preview_label.clear()
-            self.preview_label.setText(t("preview.placeholder"))
-            self.stream_label.setText(t("status.no_stream"))
+        self.new_study_button.setEnabled(not any(tb.recording for tb in self.tabs()))
+        self.active_device_label.setText(
+            t("capture.target", device=tab.choice.label(self.translator))
+            if tab is not None and tab.choice is not None
+            else t("capture.no_target")
+        )
+        self.view_stack.setCurrentWidget(self.tab_widget if self.tabs() else self.placeholder_label)
+        for index, tb in enumerate(self.tabs()):
+            self.tab_widget.setTabText(index, tb.title())
 
-    # ------------------------------------------------------------ cámaras
+    # ---------------------------------------------------------- dispositivos
     def refresh_devices(self) -> None:
-        """Vuelve a enumerar las cámaras con la API seleccionada."""
+        """Vuelve a preguntar a todos los drivers qué dispositivos hay."""
         backend = self.backend_combo.currentData() or "auto"
         try:
-            devices = list(self._list_devices(backend))
+            found = self.registry.probe_all(backend=backend)
         except ColpoError as exc:
-            devices = []
+            found = []
             self.show_error(exc, "enumerate")
+        choices = [DeviceChoice(cls.name, device) for cls, device in found]
         if self._demo_source is not None:
-            devices.append(
-                DeviceInfo(
-                    index=0,
-                    name=self._demo_source.name,
-                    backend=FILE_BACKEND,
-                    path=str(self._demo_source),
-                )
+            demo = DeviceInfo(
+                index=0,
+                name=self._demo_source.name,
+                backend=FILE_BACKEND,
+                path=str(self._demo_source),
+                driver="uvc",
             )
-        self._devices = devices
-        self._fill_camera_combo()
+            choices.append(DeviceChoice("uvc", demo))
+        self.choices = choices
+        self._fill_device_combo()
         self._update_controls()
 
-    def _fill_camera_combo(self) -> None:
+    def _driver_title(self, name: str) -> str:
+        key = f"driver.{name}"
+        if self.translator.has(key):
+            return self.translator.tr(key)
+        cls = self.registry.list_drivers().get(name)
+        return str(getattr(cls, "display_name", name))
+
+    def _fill_device_combo(self) -> None:
+        """Rellena el selector agrupado por driver (cabeceras no seleccionables)."""
         t = self.translator.tr
-        previous = self._selected_device()
-        wanted = previous.name if previous else str(self._settings.value("last_device", ""))
-        self.camera_combo.blockSignals(True)
-        self.camera_combo.clear()
-        for position, device in enumerate(self._devices):
-            if device.backend == FILE_BACKEND:
-                text = t("camera.demo", name=device.name)
-            else:
-                text = f"{device.index} — {device.name}"
-            self.camera_combo.addItem(text, position)
-            self.camera_combo.setItemData(
-                position,
-                t(
-                    "camera.tooltip",
-                    index=device.index,
-                    vid_pid=device.vid_pid,
-                    backend=device.backend,
-                ),
-                Qt.ItemDataRole.ToolTipRole,
-            )
-        if not self._devices:
-            self.camera_combo.addItem(t("camera.none_found"), None)
-        else:
-            names = [d.name for d in self._devices]
-            self.camera_combo.setCurrentIndex(names.index(wanted) if wanted in names else 0)
-        self.camera_combo.blockSignals(False)
+        previous = self._selected_choice()
+        wanted = previous.device.name if previous else str(self._settings.value("last_device", ""))
+        combo = self.device_combo
+        combo.blockSignals(True)
+        combo.clear()
+        header_font = QFont()
+        header_font.setBold(True)
+        first_row = wanted_row = -1
+        for driver in dict.fromkeys(c.driver for c in self.choices):
+            combo.addItem(self._driver_title(driver), None)
+            header = combo.model().item(combo.count() - 1)
+            header.setFlags(Qt.ItemFlag.NoItemFlags)
+            header.setFont(header_font)
+            for position, choice in enumerate(self.choices):
+                if choice.driver != driver:
+                    continue
+                text = f"    {choice.label(self.translator)}  ·  {choice.device.vid_pid}"
+                combo.addItem(text, position)
+                row = combo.count() - 1
+                first_row = row if first_row < 0 else first_row
+                if wanted_row < 0 and choice.device.name == wanted:
+                    wanted_row = row
+        if not self.choices:
+            combo.addItem(t("device.none_found"), None)
+        combo.setCurrentIndex(max(0, wanted_row if wanted_row >= 0 else first_row))
+        combo.blockSignals(False)
+        self._render_capabilities()
 
-    def _selected_device(self) -> DeviceInfo | None:
-        if not hasattr(self, "camera_combo"):
+    def _selected_choice(self) -> DeviceChoice | None:
+        if not hasattr(self, "device_combo"):
             return None
-        position = self.camera_combo.currentData()
-        if position is None or not 0 <= position < len(self._devices):
+        position = self.device_combo.currentData()
+        if position is None or not 0 <= position < len(self.choices):
             return None
-        return self._devices[position]
+        return self.choices[position]
 
-    def toggle_connection(self) -> None:
-        if self._state == "disconnected":
-            self.connect_camera()
-        else:
-            self.disconnect_camera()
+    def select_device(self, choice_index: int) -> None:
+        """Selecciona ``self.choices[choice_index]`` en el selector."""
+        self.device_combo.setCurrentIndex(self.device_combo.findData(choice_index))
 
-    def connect_camera(self) -> None:
-        device = self._selected_device()
-        if device is None or self._state != "disconnected":
+    def _render_capabilities(self) -> None:
+        choice = self._selected_choice()
+        if choice is None:
+            self.capabilities_label.setText("")
             return
-        self.dismiss_error()
-        self._generation += 1
-        factory = self._camera_factory
-        self._live = LiveCapture(
-            lambda: factory(device),
-            self.session,
-            on_event=partial(self._bridge.event.emit, self._generation),
+        try:
+            caps = self.registry.describe(choice.driver, choice.device)
+        except ColpoError as exc:
+            self.capabilities_label.setText(str(exc))
+            return
+        summary = capabilities_summary(caps, self.translator)
+        self.capabilities_label.setText(
+            f"[{self._driver_title(choice.driver)}] VID:PID {choice.device.vid_pid} · {summary}"
         )
-        self._state = "connecting"
-        self._connected_name = device.name
-        self._last_sequence = -1
-        self._settings.setValue("last_device", device.name)
-        self._live.start()
+        self.capabilities_label.setToolTip(caps.notas)
         self._update_controls()
 
-    def disconnect_camera(self) -> None:
-        """Detiene la captura en vivo (si se grababa, el video se guarda)."""
-        live, self._live = self._live, None
-        if live is not None:
-            live.stop()
-        self._state = "disconnected"
-        self._recording = False
+    def _open_camera(self, choice: DeviceChoice) -> CaptureCamera:
+        backend = self.backend_combo.currentData() or "auto"
+        options = {} if backend == "auto" else {"backend": backend}
+        return open_capture(choice.driver, choice.device, registry=self.registry, **options)
+
+    # ---------------------------------------------------------------- pestañas
+    def tabs(self) -> list[DeviceTab]:
+        return [self.tab_widget.widget(i) for i in range(self.tab_widget.count())]
+
+    def current_tab(self) -> DeviceTab | None:
+        widget = self.tab_widget.currentWidget()
+        return widget if isinstance(widget, DeviceTab) else None
+
+    def open_selected(self, *, new_tab: bool = False) -> DeviceTab | None:
+        """Abre el dispositivo seleccionado en la pestaña actual o en una nueva.
+
+        En la pestaña actual equivale a **cambiar de dispositivo en caliente**:
+        se cierra el anterior (guardando un video en curso) y se abre el nuevo.
+        """
+        choice = self._selected_choice()
+        if choice is None:
+            return None
+        target = None if new_tab else self.current_tab()
+        for tab in self.tabs():
+            if tab is not target and tab.choice is not None and tab.choice.key == choice.key:
+                self._show_message("device.already_open", choice.label(self.translator))
+                self.tab_widget.setCurrentWidget(tab)
+                return None
+        self.dismiss_error()
+        if target is None:
+            target = DeviceTab(self.translator, self.session, self._open_camera, self._on_tab_event)
+            self.tab_widget.addTab(target, "")
+        self.tab_widget.setCurrentWidget(target)
+        self._settings.setValue("last_device", choice.device.name)
+        target.start(choice)
+        self._update_controls()
+        return target
+
+    def close_tab(self, index: int) -> None:
+        tab = self.tab_widget.widget(index)
+        if isinstance(tab, DeviceTab):
+            tab.stop()
+        self.tab_widget.removeTab(index)
+        if tab is not None:
+            tab.deleteLater()
         self._update_controls()
 
-    # ------------------------------------------------------------- eventos
-    def _on_live_event(self, generation: int, event: LiveEvent) -> None:
-        current = generation == self._generation
-        t = self.translator.tr
+    def _on_tab_event(self, tab: DeviceTab, event: LiveEvent) -> None:
         if isinstance(event, Captured):
             result = event.result
+            name = result.media_path.name
             if result.metadata.tipo == "foto":
-                self._last_capture = ("capture.photo_saved", {"name": result.media_path.name})
+                self._last_capture = ("capture.photo_saved", {"name": name})
             else:
                 self._last_capture = (
                     "capture.video_saved",
-                    {"name": result.media_path.name, "codec": result.codec or "?"},
+                    {"name": name, "codec": result.codec or "?"},
                 )
                 if result.frames_dropped:
                     self.statusBar().showMessage(
-                        t("capture.frames_dropped", count=result.frames_dropped), 10000
+                        self.translator.tr("capture.frames_dropped", count=result.frames_dropped),
+                        10000,
                     )
             self._render_last_capture()
         elif isinstance(event, Failed):
-            self.show_error(event.error, event.action)
-        elif not current:
-            return  # eventos de estado de una conexión anterior
-        elif isinstance(event, Opened):
-            self._state = "streaming"
-            self.statusBar().showMessage(t("camera.connected", name=self._connected_name), 5000)
-        elif isinstance(event, RecordingChanged):
-            self._recording = event.recording
-        elif isinstance(event, Stopped):
-            if self._live is not None:
-                self._live.stop()
-                self._live = None
-                self.statusBar().showMessage(t("camera.disconnected"), 5000)
-            self._state = "disconnected"
-            self._recording = False
+            label = tab.choice.label(self.translator) if tab.choice else ""
+            self.show_error(event.error, event.action, device=label)
         self._update_controls()
 
-    def _refresh_preview(self) -> None:
-        live = self._live
-        if live is None or self._state != "streaming":
-            return
-        frame = live.latest_frame()
-        if frame is not None and frame.sequence != self._last_sequence:
-            self._last_sequence = frame.sequence
-            self.preview_label.setPixmap(
-                frame_to_pixmap(frame).scaled(
-                    self.preview_label.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
-        status = live.status()
-        if status is not None:
-            self.stream_label.setText(
-                self.translator.tr(
-                    "status.stream", width=status.width, height=status.height, fps=status.fps
-                )
-            )
-            if status.recording:
-                self.recording_label.setText(
-                    self.translator.tr(
-                        "status.recording", elapsed=_format_elapsed(status.recording_elapsed_s)
-                    )
-                )
+    def _refresh_tabs(self) -> None:
+        current = self.current_tab()
+        for tab in self.tabs():
+            tab.refresh(paint=tab is current)
 
     # ------------------------------------------------------------- acciones
     def take_photo(self) -> None:
-        if self._live is None or self._state != "streaming":
+        tab = self.current_tab()
+        if tab is None or not tab.streaming:
             return
         if self._notes_reasons:
             self.statusBar().showMessage(self.translator.tr("capture.notes_skipped"), 8000)
-        self._live.request_photo()
+        tab.take_photo()
 
     def toggle_recording(self) -> None:
-        if self._live is None or self._state != "streaming":
+        tab = self.current_tab()
+        if tab is None or not tab.streaming:
             return
-        if self._recording:
-            self._live.request_stop_video()
-        else:
-            if self._notes_reasons:
-                self.statusBar().showMessage(self.translator.tr("capture.notes_skipped"), 8000)
-            self._live.request_start_video()
+        if not tab.recording and self._notes_reasons:
+            self.statusBar().showMessage(self.translator.tr("capture.notes_skipped"), 8000)
+        tab.toggle_recording()
 
     def new_study(self) -> None:
         try:
@@ -579,9 +601,41 @@ class MainWindow(QMainWindow):
         """Cambia el idioma en caliente (equivale a usar el selector)."""
         self.language_combo.setCurrentIndex(self.language_combo.findData(code))
 
+    # ------------------------------------------------------- marca de agua
+    @property
+    def watermark_enabled(self) -> bool:
+        """Preferencia del usuario (no del estudio). Desactivada por defecto."""
+        return bool(self._settings.value("watermark_enabled", False, type=bool))
+
+    def set_watermark_enabled(self, enabled: bool) -> None:
+        self._settings.setValue("watermark_enabled", bool(enabled))
+        self._apply_watermark_setting(bool(enabled))
+
+    def _apply_watermark_setting(self, enabled: bool) -> None:
+        self.session.watermark = WatermarkOptions(
+            enabled=enabled, text=self.translator.tr("watermark.text")
+        )
+        self.watermark_status.setText(self.translator.tr("watermark.status"))
+        self.watermark_status.setVisible(enabled)
+
+    def preferences_dialog(self) -> PreferencesDialog:
+        dialog = PreferencesDialog(
+            self.translator, watermark_enabled=self.watermark_enabled, parent=self
+        )
+        dialog.accepted.connect(lambda: self.set_watermark_enabled(dialog.watermark_enabled))
+        return dialog
+
+    def show_preferences(self) -> None:
+        self.preferences_dialog().exec()
+
     # -------------------------------------------------------------- errores
-    def show_error(self, error: ColpoError, action: str) -> None:
-        self._error = (error_message_key(error, action), str(error))
+    def show_error(self, error: ColpoError, action: str, *, device: str = "") -> None:
+        detail = f"{device}: {error}" if device else str(error)
+        self._error = (error_message_key(error, action), detail)
+        self._render_error()
+
+    def _show_message(self, key: str, detail: str) -> None:
+        self._error = (key, detail)
         self._render_error()
 
     def dismiss_error(self) -> None:
@@ -622,7 +676,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (API de Qt)
         self._timer.stop()
-        self.disconnect_camera()
+        for tab in self.tabs():
+            tab.stop()
         self._settings.sync()
         super().closeEvent(event)
 
@@ -640,18 +695,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source", type=Path, help="video de demostración que se ofrece como cámara"
     )
+    parser.add_argument(
+        "--demo",
+        type=int,
+        nargs="?",
+        const=2,
+        metavar="N",
+        help="añade N cámaras simuladas (por defecto 2) para practicar sin hardware",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.demo:
+        os.environ[DEMO_ENV] = str(args.demo)
     app = QApplication.instance() or QApplication([sys.argv[0]])
     app.setApplicationName("Open Colposcope")
     app.setApplicationVersion(__version__)
     window = MainWindow(data_dir=args.data_dir, language=args.lang, demo_source=args.source)
-    window.resize(1200, 760)
+    window.resize(1280, 800)
     window.show()
-    return int(app.exec())
+    code = int(app.exec())
+    # Destruir la ventana antes de que PySide desmonte Qt al salir del intérprete:
+    # si no, Qt puede destruir widgets con la plataforma ya cerrada (cierre abrupto).
+    window.deleteLater()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    return code
 
 
 if __name__ == "__main__":
